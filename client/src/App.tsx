@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Navigate, useNavigate } from 'react-router';
 import "./App.css";
 import { Button } from "./components/ui/button";
@@ -8,23 +8,15 @@ import { Label } from "./components/ui/label";
 import { Progress } from "./components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./components/ui/select";
 import { DownloadProgress } from './types';
+import {
+  useQuery,
+} from '@tanstack/react-query'
 
-const getPreference = () => {
-    
-}
+let api = import.meta.env.VITE_API_URL;
 
 const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
-    const [config, setConfig] = useState(null);
-    useEffect(() => {
-        getPreference().then(setConfig);
-    }, []);
-
-    if (!config.skip_homepage && !hasSeenHomepage) {
-        return <Navigate to="/starter" />;
-    }
-
-    const [url, setUrl] = useState('');
     const navigate = useNavigate();
+    const [url, setUrl] = useState('');
     const [quality, setQuality] = useState('Best');
     const [format, setFormat] = useState('MP4');
     const [isAdvancedOptionsOpen, setIsAdvancedOptionsOpen] = useState(false);
@@ -39,6 +31,19 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
         strictPlaylistMode: false
     });
 
+    const { isPending, data } = useQuery({
+        queryKey: ['config'],
+        queryFn: () =>
+        fetch(new URL("/api/config", api)).then((res) =>
+            res.json(),
+        ),
+    });
+
+    if (isPending) return 'Loading...'
+
+    if (!data.skip_homepage && !hasSeenHomepage) {
+        return <Navigate to="/starter" />;
+    }
 
     const handleDownload = async () => {
         if (!url) return;
@@ -47,12 +52,6 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
         setDownloadError(null);
 
         try {
-            const options = {
-                url,
-                quality,
-                format,
-                ...advancedOptions
-            };
         } catch (error) {
             console.error('Download failed:', error);
             setIsDownloading(false);
