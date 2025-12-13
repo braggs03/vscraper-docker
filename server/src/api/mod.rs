@@ -1,13 +1,13 @@
-use axum::{Router, routing::get};
+use std::path::PathBuf;
 
-mod ytdlp;
+use axum::Router;
+use sqlx::SqlitePool;
+
 mod config;
-mod appdata;
+mod ytdlp;
 
-pub fn routes() -> Router {
-    Router::new().route("/test", get(check_health))
-}
-
-async fn check_health() -> String {
-    "{\"data\":\"bug\"}".to_string()
+pub fn routes(db: SqlitePool, download_path: PathBuf) -> Router {
+    Router::new()
+        .nest("/config", config::routes(db.clone()))
+        .nest("/download", ytdlp::routes(db, download_path))
 }
