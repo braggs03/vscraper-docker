@@ -1,6 +1,7 @@
 # server
 /server/target
 /server/static
+/server/.env*
 
 # client
 ## Logs
