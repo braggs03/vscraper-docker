@@ -2,6 +2,7 @@
 /server/target
 /server/static
 /server/.env*
+/server/sqlite*
 
 # client
 ## Logs
