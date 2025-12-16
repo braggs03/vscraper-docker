@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO Config (\n            id,\n            skip_homepage\n        )\n        VALUES (\n            1, \n            false\n        )\n        ON CONFLICT(id) DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "31f254d43ad94b61f571c84e88ce5674331d01c47323fe1c43d1b5c1126a8f3d"
+}

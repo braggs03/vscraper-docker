@@ -1,3 +1,6 @@
+import {
+    useQuery,
+} from '@tanstack/react-query';
 import { useState } from 'react';
 import { Navigate, useNavigate } from 'react-router';
 import "./App.css";
@@ -8,9 +11,6 @@ import { Label } from "./components/ui/label";
 import { Progress } from "./components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./components/ui/select";
 import { DownloadProgress } from './types';
-import {
-  useQuery,
-} from '@tanstack/react-query'
 
 let api = import.meta.env.VITE_API_URL;
 
@@ -34,9 +34,9 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
     const { isPending, data } = useQuery({
         queryKey: ['config'],
         queryFn: () =>
-        fetch(new URL("/api/config", api)).then((res) =>
-            res.json(),
-        ),
+            fetch(new URL("/api/config", api)).then((res) =>
+                res.json(),
+            ),
     });
 
     if (isPending) return 'Loading...'
@@ -52,10 +52,20 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
         setDownloadError(null);
 
         try {
+            const response = await fetch(new URL("/api/download/check", api), {
+                method: "POST",
+                body: JSON.stringify({ "url": url }),
+                headers: {
+                    "Content-Type": "application/json",
+                }
+            });
+
+            console.dir(response);
         } catch (error) {
             console.error('Download failed:', error);
-            setIsDownloading(false);
             setDownloadError('Failed to start download');
+        } finally {
+            setIsDownloading(false);
         }
     };
 

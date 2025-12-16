@@ -22,7 +22,7 @@ pub fn routes(db: SqlitePool) -> Router {
 }
 
 async fn get_config(State(db): State<SqlitePool>) -> Result<Json<Value>, StatusCode> {
-    let cfg = sqlx::query_as_unchecked!(Config, "SELECT * FROM Config WHERE id = 1")
+    let cfg = sqlx::query_as!(Config, "SELECT * FROM Config WHERE id = 1")
         .fetch_one(&db)
         .await;
 
@@ -36,10 +36,13 @@ async fn set_skip_homepage(
     State(db): State<SqlitePool>,
     Path(preference): Path<bool>,
 ) -> Result<StatusCode, StatusCode> {
-    let status = sqlx::query("UPDATE Config SET skip_homepage = $1 WHERE id=1")
-        .bind(preference)
-        .execute(&db)
-        .await;
+    let status = sqlx::query_as!(
+        Config,
+        "UPDATE Config SET skip_homepage = $1 WHERE id=1",
+        preference
+    )
+    .execute(&db)
+    .await;
 
     match status {
         Ok(result) => match result.rows_affected() {

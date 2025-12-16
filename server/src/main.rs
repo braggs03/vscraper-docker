@@ -1,13 +1,13 @@
 use std::{env, fs, path::PathBuf};
 
-use axum::{http::Method, Router};
+use axum::{Router, http::{HeaderName, Method}};
 use error::Error;
 use sqlx::{migrate::MigrateDatabase, Sqlite, SqlitePool};
 use tower_http::{
     cors::{Any, CorsLayer},
     services::ServeDir,
 };
-use tracing::{error, info, instrument::WithSubscriber, Level};
+use tracing::{error, info, Level};
 
 mod api;
 mod error;
@@ -15,7 +15,7 @@ mod error;
 const DB_URL_DEFAULT: &str = "sqlite://sqlite.db";
 const DB_URL_KEY: &str = "DB_URL";
 const DOWNLOAD_LOCATION: &str = "DOWNLOAD_LOCATION";
-const DOWNLOAD_LOCATION_DEFAULT: &str = "/downloads";
+const DOWNLOAD_LOCATION_DEFAULT: &str = "~/Downloads";
 const LOG_LEVEL_DEFAULT: Level = Level::INFO;
 const LOG_LEVEL_KEY: &str = "LOG_LEVEL";
 
@@ -54,6 +54,7 @@ fn cors() -> CorsLayer {
     CorsLayer::new()
         .allow_methods([Method::GET, Method::POST])
         .allow_origin(Any)
+        .allow_headers([HeaderName::from_static("content-type")])
 }
 
 fn str_to_log_level(level: &str) -> Level {
@@ -98,7 +99,7 @@ async fn create_tables(db: SqlitePool) {
         Err(err) => error!("couldn't create base tables: {}", err),
     }
 
-    match sqlx::query(
+    match sqlx::query!(
         r#"INSERT INTO Config (
             id,
             skip_homepage
