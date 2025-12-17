@@ -2,9 +2,8 @@ use axum::{
     http::{HeaderName, Method},
     Router,
 };
-use error::Error;
 use sqlx::{migrate::MigrateDatabase, Sqlite, SqlitePool};
-use std::{env, path::PathBuf};
+use std::{env, io::Error, path::PathBuf};
 use tower_http::{
     cors::{Any, CorsLayer},
     services::ServeDir,

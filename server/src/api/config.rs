@@ -17,7 +17,7 @@ struct Config {
 pub fn routes(db: SqlitePool) -> Router {
     Router::new()
         .route("/", get(get_config))
-        .route("/{preference}", post(set_skip_homepage))
+        .route("/homepage/{preference}", post(set_skip_homepage))
         .with_state(db)
 }
 
