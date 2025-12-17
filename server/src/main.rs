@@ -1,8 +1,10 @@
-use std::{env, fs, path::PathBuf};
-
-use axum::{Router, http::{HeaderName, Method}};
+use axum::{
+    http::{HeaderName, Method},
+    Router,
+};
 use error::Error;
 use sqlx::{migrate::MigrateDatabase, Sqlite, SqlitePool};
+use std::{env, path::PathBuf};
 use tower_http::{
     cors::{Any, CorsLayer},
     services::ServeDir,
@@ -15,7 +17,7 @@ mod error;
 const DB_URL_DEFAULT: &str = "sqlite://sqlite.db";
 const DB_URL_KEY: &str = "DB_URL";
 const DOWNLOAD_LOCATION: &str = "DOWNLOAD_LOCATION";
-const DOWNLOAD_LOCATION_DEFAULT: &str = "~/Downloads";
+const DOWNLOAD_LOCATION_DEFAULT: &str = "/home/brandon/Downloads";
 const LOG_LEVEL_DEFAULT: Level = Level::INFO;
 const LOG_LEVEL_KEY: &str = "LOG_LEVEL";
 
@@ -34,27 +36,21 @@ async fn main() -> Result<(), Error> {
     };
 
     tracing_subscriber::fmt().with_max_level(level).init();
-
     let db = init_db(&db_url).await;
-
-    let cors = cors();
-
+    let cors = CorsLayer::new()
+        .allow_methods([Method::GET, Method::POST])
+        .allow_origin(Any)
+        .allow_headers([HeaderName::from_static("content-type")]);
     let static_dir = ServeDir::new("static");
+
     let app = Router::new()
-        .nest("/api", api::routes(db, download_location))
+        .nest("/api", api::routes(db, download_location).await)
         .fallback_service(static_dir)
         .layer(cors);
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await?;
     axum::serve(listener, app).await?;
 
     Ok(())
-}
-
-fn cors() -> CorsLayer {
-    CorsLayer::new()
-        .allow_methods([Method::GET, Method::POST])
-        .allow_origin(Any)
-        .allow_headers([HeaderName::from_static("content-type")])
 }
 
 fn str_to_log_level(level: &str) -> Level {
@@ -86,19 +82,14 @@ async fn init_db(db_url: &str) -> SqlitePool {
         }
         Err(err) => error!("failed retrieving database: {}", err),
     }
-    let pool = SqlitePool::connect(db_url).await.unwrap();
-    create_tables(pool.clone()).await;
+    let db = SqlitePool::connect(db_url).await.unwrap();
 
-    pool
+    create_default_config(&db).await;
+
+    db
 }
 
-async fn create_tables(db: SqlitePool) {
-    let init_sql = fs::read_to_string("./data/init.sql").expect("Failed to read init.sql");
-    match sqlx::query(&init_sql).execute(&db).await {
-        Ok(_) => {}
-        Err(err) => error!("couldn't create base tables: {}", err),
-    }
-
+async fn create_default_config(db: &SqlitePool) {
     match sqlx::query!(
         r#"INSERT INTO Config (
             id,
@@ -110,12 +101,12 @@ async fn create_tables(db: SqlitePool) {
         )
         ON CONFLICT(id) DO NOTHING"#,
     )
-    .execute(&db)
+    .execute(db)
     .await
     {
         Ok(_) => {}
         Err(err) => {
-            error!("failed to create default config: {}", err);
+            panic!("failed to create default config: {}", err);
         }
     }
 }
