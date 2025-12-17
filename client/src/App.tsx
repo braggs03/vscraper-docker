@@ -243,7 +243,7 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
                             >
                                 <div className="grow">
                                     <div className="flex justify-between">
-                                        <span className="text-sm truncate max-w-[200px]">{url}</span>
+                                        <span className="text-sm truncate max-w-50">{url}</span>
                                         <span className="text-sm">{download.percent}%</span>
                                     </div>
                                     <div className="w-full bg-gray-200 rounded-full h-2.5 dark:bg-gray-700 mt-1">
