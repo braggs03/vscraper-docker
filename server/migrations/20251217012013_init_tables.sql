@@ -7,6 +7,9 @@ CREATE TABLE IF NOT EXISTS
 
 CREATE TABLE IF NOT EXISTS
     Download (
-        id INTEGER PRIMARY KEY NOT NULL,
-        status TEXT NOT NULL
+        url TEXT PRIMARY KEY NOT NULL, 
+        status TEXT NOT NULL,
+        container TEXT NOT NULL,
+        name_format TEXT NOT NULL, 
+        quality TEXT NOT NULL
     );
