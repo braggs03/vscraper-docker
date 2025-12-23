@@ -10,7 +10,7 @@ import { useQuery } from "@tanstack/react-query";
 let api = import.meta.env.VITE_API_URL;
 
 const updatePreference = (preference: boolean) => {
-    fetch(new URL(`/api/config/` + preference, api), {
+    fetch(new URL(`/api/config/homepage/` + preference, api), {
         method: "post"
     })
 }
@@ -25,6 +25,7 @@ export default function Homepage({ onGetStarted }: { onGetStarted: () => void })
         queryFn: () =>
             fetch(new URL("/api/config", api)).then((res) =>
                 res.json(),
+        
             ),
     });
 

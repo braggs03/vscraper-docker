@@ -1,7 +1,7 @@
 import {
     useQuery,
 } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router';
 import "./App.css";
 import { Button } from "./components/ui/button";
@@ -31,6 +31,31 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
         strictPlaylistMode: false
     });
 
+    // Initialize WebSocket when the component mounts
+    useEffect(() => {
+        const ws = new WebSocket('ws://localhost:3000/api/download/ws');
+
+        ws.onopen = () => {
+            console.log('Connected to WebSocket server!');
+        };
+
+        ws.onmessage = (event) => {
+            console.log(event.data);
+        };
+
+        ws.onerror = (error) => {
+            console.error('WebSocket Error:', error);
+        };
+
+        ws.onclose = () => {
+            console.log('Disconnected from WebSocket server!');
+        };
+
+        return () => {
+            ws.close();
+        };
+    }, []);
+
     const { isPending, data } = useQuery({
         queryKey: ['config'],
         queryFn: () =>
@@ -52,9 +77,16 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
         setDownloadError(null);
 
         try {
-            const response = await fetch(new URL("/api/download/check", api), {
+            const response = await fetch(new URL("/api/download", api), {
                 method: "POST",
-                body: JSON.stringify({ "url": url }),
+                body: JSON.stringify({ 
+                    "url": url,
+                    "options": {
+                        "container":"mp4",
+                        "name_format":"%(title)s",
+                        "quality":"1080p"
+                    }
+                }),
                 headers: {
                     "Content-Type": "application/json",
                 }
