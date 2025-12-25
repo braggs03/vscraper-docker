@@ -56,6 +56,7 @@ struct DownloadProgress {
 #[sqlx(type_name = "status")]
 pub enum Status {
     Canceled,
+    Checking,
     Completed,
     Failed,
     None,
