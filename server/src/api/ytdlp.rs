@@ -83,29 +83,31 @@ async fn handle_download_websocket(socket: WebSocket, tx: Arc<Mutex<broadcast::S
 }
 
 #[derive(Deserialize, Serialize)]
-struct Download {
+struct DownloadRequest {
     url: Url,
     options: DownloadOptions,
 }
 
 async fn download_from_options(
     State(app_state): State<AppState>,
-    Json(download): Json<Download>,
+    Json(download): Json<DownloadRequest>,
 ) -> StatusCode {
     let (download_update_tx, mut download_update_rx) = mpsc::channel(100);
 
     tokio::task::spawn(async move {
+        while let Some(string) = download_update_rx.recv().await {
+            if let Err(err) = app_state.tx.lock().await.send(string) {
+                error!("failed to send download message to frontend: {}", err);
+            }
+        }
+    });
+
+    let status = tokio::task::spawn(async move {
         app_state
             .ytdlp_client
             .download_from_options(&download.url, &download.options, Some(download_update_tx))
             .await
-    });
-
-    tokio::task::spawn(async move {
-        while let Some(string) = download_update_rx.recv().await {
-            app_state.tx.lock().await.send(string);
-        }
-    });
+    }).await;
 
     todo!()
 }
@@ -129,7 +131,7 @@ async fn cancel_download(
 
 async fn check_url_availability(
     State(ytdlp_client): State<YtdlpClient>,
-    Json(download): Json<Download>,
+    Json(download): Json<DownloadRequest>,
 ) -> StatusCode {
     match ytdlp_client
         .check_url_availability(&download.url, &download.options)
