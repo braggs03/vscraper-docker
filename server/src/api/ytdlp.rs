@@ -77,7 +77,8 @@ async fn handle_download_websocket(socket: WebSocket, tx: Arc<Mutex<broadcast::S
             .send(axum::extract::ws::Message::Text(message.into()))
             .await
         {
-            error!("sending message to client: {}", e);
+            error!("sending message to client, client disconnected: {}", e);
+            return;
         }
     }
 }
@@ -102,14 +103,14 @@ async fn download_from_options(
         }
     });
 
-    let status = tokio::task::spawn(async move {
-        app_state
+    let _ = tokio::task::spawn(async move {
+        let _ = app_state
             .ytdlp_client
             .download_from_options(&download.url, &download.options, Some(download_update_tx))
-            .await
+            .await;
     }).await;
 
-    todo!()
+    StatusCode::CREATED
 }
 
 async fn cancel_download(
@@ -123,11 +124,24 @@ async fn cancel_download(
         },
         Err(_) => {
             info!("cancel request for url: {}", url);
-            println!("map: {:?}", ytdlp_client.downloads.lock().await);
             StatusCode::BAD_REQUEST
         }
     }
 }
+
+async fn pause_download(
+    State(ytdlp_client): State<YtdlpClient>,
+    Json(url): Json<Url>,
+) -> StatusCode {
+    match ytdlp_client.pause_download(url).await {
+        Ok(status) => match status {
+            Status::Paused => StatusCode::OK,
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
+        },
+        Err(_) => StatusCode::BAD_REQUEST,
+    }
+}
+
 
 async fn check_url_availability(
     State(ytdlp_client): State<YtdlpClient>,
@@ -149,18 +163,5 @@ async fn check_url_availability(
             }
         }
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
-    }
-}
-
-async fn pause_download(
-    State(ytdlp_client): State<YtdlpClient>,
-    Json(url): Json<Url>,
-) -> StatusCode {
-    match ytdlp_client.pause_download(url).await {
-        Ok(status) => match status {
-            Status::Paused => StatusCode::OK,
-            _ => StatusCode::INTERNAL_SERVER_ERROR,
-        },
-        Err(_) => StatusCode::BAD_REQUEST,
     }
 }

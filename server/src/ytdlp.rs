@@ -1,16 +1,14 @@
+use dashmap::DashMap;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, SqlitePool};
-use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::process::{ExitStatus, Stdio};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
-use tokio::sync::mpsc::error::TryRecvError;
-use tokio::sync::mpsc::Sender;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::mpsc::{self, error::TryRecvError, Sender};
 use tracing::{debug, error, info, trace};
 use url::Url;
 
@@ -30,7 +28,7 @@ pub enum Error {
 #[derive(Clone)]
 pub struct YtdlpClient {
     download_path: PathBuf,
-    pub downloads: Arc<Mutex<HashMap<Url, Download>>>,
+    pub downloads: Arc<DashMap<Url, Download>>,
     ytdlp_path: String,
 }
 
@@ -88,7 +86,7 @@ impl From<String> for Status {
     }
 }
 
-async fn init_from_db(db: SqlitePool) -> Arc<Mutex<HashMap<Url, Download>>> {
+async fn init_from_db(db: SqlitePool) -> Arc<DashMap<Url, Download>> {
     // let rows = sqlx::query!("SELECT * FROM Download").fetch_all(&db).await;
     // let downloads = match rows {
     //     Ok(rows) => {
@@ -119,7 +117,7 @@ async fn init_from_db(db: SqlitePool) -> Arc<Mutex<HashMap<Url, Download>>> {
     //     .map(|x| (x.0, (x.1, x.2, None)))
     //     .collect::<HashMap<_, (_, _, _)>>();
     // Arc::new(Mutex::new(download_map))
-    Arc::new(Mutex::new(HashMap::new()))
+    Arc::new(DashMap::new())
 }
 
 impl YtdlpClient {
@@ -140,7 +138,7 @@ impl YtdlpClient {
         let mut received_signal = None;
         let download_path = self.download_path.clone().join(&options.name_format);
         let (download_kill_tx, mut download_kill_rx) = mpsc::channel(100);
-        self.downloads.lock().await.insert(
+        self.downloads.insert(
             url.clone(),
             Download {
                 status: Status::Running,
@@ -278,7 +276,9 @@ impl YtdlpClient {
                     };
 
                     if let Some(ref download_update_tx) = download_update_tx {
-                        download_update_tx.send(serde_json::to_string(&download_update).unwrap()).await;
+                        download_update_tx
+                            .send(serde_json::to_string(&download_update).unwrap())
+                            .await;
                     }
                 }
             }
@@ -325,12 +325,22 @@ impl YtdlpClient {
     // }
 
     pub async fn cancel_download(&self, url: Url) -> Result<Status> {
-        let mut downloads = self.downloads.lock().await;
-        match downloads.remove(&url) {
-            Some(download) => match download {
-                Download { status: Status::Running, options, tx: Some(tx) } => match tx.send(Signal::Cancel).await {
+        match self.downloads.remove(&url) {
+            Some((_, download)) => match download {
+                Download {
+                    status: Status::Running,
+                    options,
+                    tx: Some(tx),
+                } => match tx.send(Signal::Cancel).await {
                     Ok(_) => {
-                        downloads.insert(url, Download { status: Status::Canceled, options, tx: None });
+                        self.downloads.insert(
+                            url,
+                            Download {
+                                status: Status::Canceled,
+                                options,
+                                tx: None,
+                            },
+                        );
                         Ok(Status::Canceled)
                     }
                     Err(_) => Err(Error::FailedToHalt),
@@ -342,12 +352,22 @@ impl YtdlpClient {
     }
 
     pub async fn pause_download(&self, url: Url) -> Result<Status> {
-        let mut downloads = self.downloads.lock().await;
-        match downloads.remove(&url) {
-            Some(download) => match download {
-                Download { status: Status::Running, options, tx: Some(tx) } => match tx.send(Signal::Pause).await {
+        match self.downloads.remove(&url) {
+            Some((_, download)) => match download {
+                Download {
+                    status: Status::Running,
+                    options,
+                    tx: Some(tx),
+                } => match tx.send(Signal::Pause).await {
                     Ok(_) => {
-                        downloads.insert(url, Download { status: Status::Paused, options, tx: None });
+                        self.downloads.insert(
+                            url,
+                            Download {
+                                status: Status::Paused,
+                                options,
+                                tx: None,
+                            },
+                        );
                         Ok(Status::Paused)
                     }
                     Err(_) => Err(Error::FailedToHalt),
@@ -357,6 +377,7 @@ impl YtdlpClient {
             None => Err(Error::NotDownloading),
         }
     }
+
     pub async fn check_url_availability(
         &self,
         url: &Url,
@@ -375,7 +396,7 @@ impl YtdlpClient {
     async fn get_filename(&self, url: &Url, options: &DownloadOptions) -> Option<String> {
         let child = Command::new(&self.ytdlp_path)
             .arg("-o")
-            .arg("%(title)s")
+            .arg(&options.name_format)
             .arg("--get-filename")
             .arg(url.as_str())
             .stderr(Stdio::null())
