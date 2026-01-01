@@ -1,6 +1,7 @@
 import {
     useQuery,
 } from '@tanstack/react-query';
+import saveAs from 'file-saver';
 import { useEffect, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router';
 import "./App.css";
@@ -13,12 +14,17 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { DownloadProgress } from './types';
 
 let api = import.meta.env.VITE_API_URL;
+let ws_api = import.meta.env.VITE_WS_API_URL;
 
 const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
+
+    // <----- State ----->
+
     const navigate = useNavigate();
     const [url, setUrl] = useState('');
     const [quality, setQuality] = useState('Best');
-    const [format, setFormat] = useState('MP4');
+    const [nameFormat, setNameFormat] = useState('%(title)s');
+    const [container, setContainer] = useState('MP4');
     const [isAdvancedOptionsOpen, setIsAdvancedOptionsOpen] = useState(false);
     const [downloads, setDownloads] = useState<{ [key: string]: DownloadProgress }>({});
     const [isDownloading, setIsDownloading] = useState(false);
@@ -31,13 +37,12 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
         strictPlaylistMode: false
     });
 
-    // Initialize WebSocket when the component mounts
     useEffect(() => {
-        const ws = new WebSocket('ws://localhost:3000/api/download/ws');
+        let ws = new WebSocket(new URL('download/ws', ws_api));
 
         ws.onopen = () => {
-            console.log('Connected to WebSocket server!');
-        };
+            console.log("opened download ws");
+        }
 
         ws.onmessage = (event) => {
             console.log(event.data);
@@ -47,8 +52,8 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
             console.error('WebSocket Error:', error);
         };
 
-        ws.onclose = () => {
-            console.log('Disconnected from WebSocket server!');
+        ws.onclose = (event: CloseEvent) => {
+
         };
 
         return () => {
@@ -64,27 +69,29 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
             ),
     });
 
+    // <----- Loading ----->
+
     if (isPending) return 'Loading...'
+
+    // <----- App ----->
 
     if (!data.skip_homepage && !hasSeenHomepage) {
         return <Navigate to="/starter" />;
     }
 
     const handleDownload = async () => {
-        if (!url) return;
-
         setIsDownloading(true);
         setDownloadError(null);
 
         try {
-            const response = await fetch(new URL("/api/download", api), {
+            const response = await fetch(new URL("download", api), {
                 method: "POST",
-                body: JSON.stringify({ 
+                body: JSON.stringify({
                     "url": url,
                     "options": {
-                        "container":"mp4",
-                        "name_format":"%(title)s",
-                        "quality":"1080p"
+                        "container": container,
+                        "name_format": nameFormat,
+                        "quality": quality
                     }
                 }),
                 headers: {
@@ -109,6 +116,19 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
             console.error('Cancel download failed:', error);
         }
     };
+
+    const handleUrlDownloads = async () => {
+
+        let urls = await fetch(new URL("download/urls", api)).then((res) =>
+            res.json(),
+        );
+
+        urls = urls.join('\n'); 
+
+        const file = new File([urls], "urls.txt", { type: "text/plain;charset=utf-8" });
+
+        saveAs(file);
+    }
 
     return (
         <main className="flex flex-col items-center justify-center text-center min-h-screen max-w-md mx-auto space-y-4">
@@ -147,7 +167,7 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
                     </SelectContent>
                 </Select>
 
-                <Select value={format} onValueChange={setFormat} disabled={isDownloading}>
+                <Select value={container} onValueChange={setContainer} disabled={isDownloading}>
                     <SelectTrigger className="w-full">
                         <SelectValue placeholder="Format" />
                     </SelectTrigger>
@@ -170,7 +190,7 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
             </Button>
 
             {isAdvancedOptionsOpen && (
-                <div className="space-y-4 p-4 border rounded-md">
+                <div className="space-y-4 p-4 border rounded-md w-full">
                     <div className="flex space-x-2">
                         <div className="flex-1">
                             <Label>Auto Start</Label>
@@ -256,10 +276,9 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
                         <Label htmlFor="strict-playlist-mode">Strict Playlist Mode</Label>
                     </div>
 
-                    <div className="flex flex-col space-x-2 mt-4 space-y-2">
-                        <Button variant="outline" className="w-full">Import URLs</Button>
-                        <Button variant="outline" className="w-full">Export URLs</Button>
-                        <Button variant="outline" className="w-full">Copy URLs</Button>
+                    <div className="flex flex-row justify-center space-x-2 mt-4 space-y-2">
+                        <Button variant="outline" className="flex-1">Import URLs</Button>
+                        <Button variant="outline" className="flex-1" onClick={() => handleUrlDownloads()}>Export URLs</Button>
                     </div>
                 </div>
             )}
