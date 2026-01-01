@@ -2,7 +2,7 @@ use axum::extract::ws::WebSocket;
 use axum::extract::{FromRef, State, WebSocketUpgrade};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use axum::routing::{any, post};
+use axum::routing::{any, get, post};
 use axum::{Json, Router};
 use futures_util::{sink::SinkExt, stream::StreamExt};
 use serde::{Deserialize, Serialize};
@@ -11,10 +11,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::broadcast::Sender;
 use tokio::sync::{broadcast, mpsc, Mutex};
-use tracing::{debug, error, info};
+use tracing::{error, info};
 use url::Url;
 
-use crate::ytdlp::{DownloadOptions, Status, YtdlpClient};
+use crate::ytdlp::{self, DownloadOptions, Status, YtdlpClient};
 
 #[derive(Clone)]
 struct AppState {
@@ -38,8 +38,8 @@ pub async fn routes(db: SqlitePool, ytdlp_path: String, download_path: PathBuf) 
     Router::new()
         .route("/", post(download_from_options))
         .route("/cancel", post(cancel_download))
-        .route("/check", post(check_url_availability))
         .route("/pause", post(pause_download))
+        .route("/urls", get(get_urls))
         .with_state(AppState {
             tx: safe_tx.clone(),
             ytdlp_client,
@@ -92,7 +92,19 @@ struct DownloadRequest {
 async fn download_from_options(
     State(app_state): State<AppState>,
     Json(download): Json<DownloadRequest>,
-) -> StatusCode {
+) -> Result<StatusCode, (StatusCode, String)> {
+    if let Err(err) = app_state
+        .ytdlp_client
+        .check_url_availability(&download.url, &download.options)
+        .await
+    {
+        return match err {
+            ytdlp::Error::FailedCheck => Err((StatusCode::BAD_REQUEST, String::from("Bad download"))),
+            ytdlp::Error::General { err } => Err((StatusCode::INTERNAL_SERVER_ERROR, err.kind().to_string())),
+            _ => unreachable!(),
+        };
+    }
+
     let (download_update_tx, mut download_update_rx) = mpsc::channel(100);
 
     tokio::task::spawn(async move {
@@ -103,14 +115,14 @@ async fn download_from_options(
         }
     });
 
-    let _ = tokio::task::spawn(async move {
+    tokio::task::spawn(async move {
         let _ = app_state
             .ytdlp_client
             .download_from_options(&download.url, &download.options, Some(download_update_tx))
             .await;
-    }).await;
+    });
 
-    StatusCode::CREATED
+    Ok(StatusCode::CREATED)
 }
 
 async fn cancel_download(
@@ -129,6 +141,16 @@ async fn cancel_download(
     }
 }
 
+async fn get_urls(State(ytdlp_client): State<YtdlpClient>) -> Result<String, StatusCode> {
+    match ytdlp_client.get_urls().await {
+        Ok(urls) => match serde_json::to_string(&urls) {
+            Ok(url_str) => Ok(url_str),
+            Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+        },
+        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
+
 async fn pause_download(
     State(ytdlp_client): State<YtdlpClient>,
     Json(url): Json<Url>,
@@ -139,29 +161,5 @@ async fn pause_download(
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         },
         Err(_) => StatusCode::BAD_REQUEST,
-    }
-}
-
-
-async fn check_url_availability(
-    State(ytdlp_client): State<YtdlpClient>,
-    Json(download): Json<DownloadRequest>,
-) -> StatusCode {
-    match ytdlp_client
-        .check_url_availability(&download.url, &download.options)
-        .await
-    {
-        Ok(status) => {
-            info!(
-                "download status for url: {}, {}",
-                download.url.as_str(),
-                status
-            );
-            match status.success() {
-                true => StatusCode::OK,
-                false => StatusCode::BAD_REQUEST,
-            }
-        }
-        Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
