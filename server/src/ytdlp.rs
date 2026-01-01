@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, SqlitePool};
 use std::fs;
 use std::path::PathBuf;
-use std::process::{ExitStatus, Stdio};
+use std::process::Stdio;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
@@ -16,13 +16,16 @@ const YTDLP_DOWNLOAD_UPDATE_REGEX: &str = r"\[download\]\s+(\d+(?:\.\d+)?)%\s+of
 
 pub type Result<T> = std::result::Result<T, Error>;
 
+#[allow(unused)]
 #[derive(Debug)]
 pub enum Error {
+    DownloadAlreadyPresent,
+    FailedCheck,
     FailedToComplete,
     FailedToHalt,
     FailedToStart,
     NotDownloading,
-    DownloadAlreadyPresent,
+    General { err: std::io::Error }
 }
 
 #[derive(Clone)]
@@ -32,7 +35,7 @@ pub struct YtdlpClient {
     ytdlp_path: String,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Download {
     options: DownloadOptions,
     status: Status,
@@ -147,25 +150,6 @@ impl YtdlpClient {
             },
         );
 
-        debug!("checking url availability for: {}", url);
-        match self.check_url_availability(&url, &options).await {
-            Ok(exit_status) => {
-                if exit_status.success() {
-                } else {
-                    // TODO: Parse stderr to provide exact error caused by yt-dlp.
-                    // Return generic error in place of other errors
-                    return Err(Error::FailedToStart);
-                }
-                // WEBSOCKET: Emission::YtdlpUrlUpdate
-            }
-            Err(err) => match err.kind() {
-                err => {
-                    error!("executing command: {}", err);
-                    return Err(Error::FailedToStart);
-                }
-            },
-        }
-
         debug!("downloading from url");
         let mut child = Command::new(&self.ytdlp_path)
             .arg("--newline")
@@ -276,9 +260,11 @@ impl YtdlpClient {
                     };
 
                     if let Some(ref download_update_tx) = download_update_tx {
-                        download_update_tx
+                        let _send_result = download_update_tx
                             .send(serde_json::to_string(&download_update).unwrap())
                             .await;
+
+                        // handle_send(send_result);
                     }
                 }
             }
@@ -298,7 +284,7 @@ impl YtdlpClient {
             Err(_) => Status::Failed,
         };
 
-        todo!()
+        Ok(Status::Completed)
     }
 
     // async fn add_download_handler(
@@ -378,19 +364,29 @@ impl YtdlpClient {
         }
     }
 
+    /// Checks if yt-dlp is able to download the video(s) of the url with the given options.
+    /// # Errors
+    /// Possible error variants are: FailedCheck, General
     pub async fn check_url_availability(
         &self,
         url: &Url,
         options: &DownloadOptions,
-    ) -> std::result::Result<ExitStatus, std::io::Error> {
+    ) -> Result<()> {
         info!("ytdlp path: {}", self.ytdlp_path);
-        Command::new(&self.ytdlp_path)
+        match Command::new(&self.ytdlp_path)
             .arg("--simulate")
             .arg(url.as_str())
             .stderr(Stdio::null())
             .stdout(Stdio::null())
             .status()
             .await
+        {
+            Ok(exit_status) => match exit_status.success() {
+                true => Ok(()),
+                false => Err(Error::FailedCheck)
+            },
+            Err(err) => Err(Error::General { err }),
+        }
     }
 
     async fn get_filename(&self, url: &Url, options: &DownloadOptions) -> Option<String> {
@@ -416,6 +412,14 @@ impl YtdlpClient {
         };
 
         None
+    }
+
+    pub async fn get_urls(&self) -> Result<Vec<Url>> {
+        Ok(self
+            .downloads
+            .iter()
+            .map(|entry| entry.key().clone())
+            .collect())
     }
 
     // async fn insert_download_db(
