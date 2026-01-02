@@ -3,10 +3,8 @@ use axum::{
     Router,
 };
 use serde::Deserialize;
-use sqlx::{
-    sqlite::SqliteConnectOptions,
-    SqlitePool,
-};
+use server::create_default_config;
+use sqlx::{sqlite::SqliteConnectOptions, SqlitePool};
 use std::{io::Error, str::FromStr};
 use tower_http::{
     cors::{Any, CorsLayer},
@@ -15,8 +13,10 @@ use tower_http::{
 use tracing::Level;
 
 mod api;
+mod core;
 mod error;
-mod ytdlp;
+
+// <----- Args - Environmental Variables ----->
 
 #[derive(Deserialize, Debug)]
 struct Args {
@@ -45,6 +45,8 @@ fn default_log_level() -> String {
 fn default_ytdlp_path() -> String {
     String::from("yt-dlp")
 }
+
+// <----- Main ----->
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
@@ -89,26 +91,4 @@ async fn main() -> Result<(), Error> {
     axum::serve(listener, app).await?;
 
     Ok(())
-}
-
-async fn create_default_config(db: &SqlitePool) {
-    match sqlx::query!(
-        r#"INSERT INTO Config (
-            id,
-            skip_homepage
-        )
-        VALUES (
-            1, 
-            false
-        )
-        ON CONFLICT(id) DO NOTHING"#,
-    )
-    .execute(db)
-    .await
-    {
-        Ok(_) => {}
-        Err(err) => {
-            panic!("failed to create default config: {}", err);
-        }
-    }
 }

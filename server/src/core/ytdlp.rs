@@ -16,16 +16,14 @@ const YTDLP_DOWNLOAD_UPDATE_REGEX: &str = r"\[download\]\s+(\d+(?:\.\d+)?)%\s+of
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-#[allow(unused)]
 #[derive(Debug)]
 pub enum Error {
     DownloadAlreadyPresent,
     FailedCheck,
     FailedToComplete,
     FailedToHalt,
-    FailedToStart,
     NotDownloading,
-    General { err: std::io::Error }
+    General { err: std::io::Error },
 }
 
 #[derive(Clone)]
@@ -210,38 +208,16 @@ impl YtdlpClient {
 
                     match signal {
                         Signal::Cancel => {
-                            let download_file_name = self.get_filename(&url, options).await;
-                            let download_dir_files = std::fs::read_dir(&self.download_path);
-                            if let Some(download_file_name) = download_file_name {
-                                for dir in download_dir_files {
-                                    for file in dir {
-                                        match file {
-                                            Ok(file) => match file.file_name().into_string() {
-                                                Ok(file_name) => {
-                                                    if file_name.contains(&download_file_name) {
-                                                        info!(
-                                                            "removing file: {}",
-                                                            file.file_name()
-                                                                .into_string()
-                                                                .unwrap_or("unknown".to_string())
-                                                        );
-                                                        let _ = fs::remove_file(file.path());
-                                                    }
-                                                }
-                                                Err(_) => todo!(),
-                                            },
-                                            Err(_) => todo!(),
-                                        }
-                                    }
-                                }
-                            }
+                            self.remove_partial_files(&url, &options);
                         }
                         Signal::Pause => {} // Nothing should done, partially completed files should remain
                     }
                     break;
                 }
+                Err(TryRecvError::Disconnected) => {
+                    break;
+                }
                 Err(TryRecvError::Empty) => {}
-                Err(TryRecvError::Disconnected) => {}
             }
             if regex.is_match(&line) {
                 if let Some(captures) = regex.captures(&line) {
@@ -260,11 +236,11 @@ impl YtdlpClient {
                     };
 
                     if let Some(ref download_update_tx) = download_update_tx {
-                        let _send_result = download_update_tx
+                        let send_result = download_update_tx
                             .send(serde_json::to_string(&download_update).unwrap())
                             .await;
 
-                        // handle_send(send_result);
+                        server::handle_send(send_result);
                     }
                 }
             }
@@ -367,14 +343,13 @@ impl YtdlpClient {
     /// Checks if yt-dlp is able to download the video(s) of the url with the given options.
     /// # Errors
     /// Possible error variants are: FailedCheck, General
-    pub async fn check_url_availability(
-        &self,
-        url: &Url,
-        options: &DownloadOptions,
-    ) -> Result<()> {
-        info!("ytdlp path: {}", self.ytdlp_path);
+    pub async fn check_url_availability(&self, url: &Url, options: &DownloadOptions) -> Result<()> {
         match Command::new(&self.ytdlp_path)
             .arg("--simulate")
+            .arg("-o")
+            .arg(&options.name_format)
+            .arg("-f")
+            .arg(format!("bestvideo[height={}]+bestaudio/best", options.quality))
             .arg(url.as_str())
             .stderr(Stdio::null())
             .stdout(Stdio::null())
@@ -383,7 +358,7 @@ impl YtdlpClient {
         {
             Ok(exit_status) => match exit_status.success() {
                 true => Ok(()),
-                false => Err(Error::FailedCheck)
+                false => Err(Error::FailedCheck),
             },
             Err(err) => Err(Error::General { err }),
         }
@@ -420,6 +395,34 @@ impl YtdlpClient {
             .iter()
             .map(|entry| entry.key().clone())
             .collect())
+    }
+
+    async fn remove_partial_files(&self, url: &Url, options: &DownloadOptions) {
+        let download_file_name = self.get_filename(url, options).await;
+        let download_dir_files = std::fs::read_dir(&self.download_path);
+        if let Some(download_file_name) = download_file_name {
+            for dir in download_dir_files {
+                for file in dir {
+                    match file {
+                        Ok(file) => match file.file_name().into_string() {
+                            Ok(file_name) => {
+                                if file_name.contains(&download_file_name) {
+                                    info!(
+                                        "removing file: {}",
+                                        file.file_name()
+                                            .into_string()
+                                            .unwrap_or("unknown".to_string())
+                                    );
+                                    let _ = fs::remove_file(file.path());
+                                }
+                            }
+                            Err(_) => todo!(),
+                        },
+                        Err(_) => todo!(),
+                    }
+                }
+            }
+        }
     }
 
     // async fn insert_download_db(

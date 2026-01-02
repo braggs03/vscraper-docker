@@ -1,12 +1,10 @@
-name: auntbeckysdeli
+name: vScraper
 services:
   backend:
-    container_name: rust-react
+    container_name: vScraper
     restart: always
     build:
       context: ./
       dockerfile: Dockerfile
     ports:
       - "3000:3000"
-
-
