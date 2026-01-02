@@ -23,7 +23,7 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
     const navigate = useNavigate();
     const [url, setUrl] = useState('');
     const [quality, setQuality] = useState('Best');
-    const [nameFormat, setNameFormat] = useState('%(title)s');
+    const [nameFormat, _] = useState('%(title)s');
     const [container, setContainer] = useState('MP4');
     const [isAdvancedOptionsOpen, setIsAdvancedOptionsOpen] = useState(false);
     const [downloads, setDownloads] = useState<{ [key: string]: DownloadProgress }>({});
@@ -52,7 +52,7 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
             console.error('WebSocket Error:', error);
         };
 
-        ws.onclose = (event: CloseEvent) => {
+        ws.onclose = (_: CloseEvent) => {
 
         };
 
@@ -123,7 +123,7 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
             res.json(),
         );
 
-        urls = urls.join('\n'); 
+        urls = urls.join('\n');
 
         const file = new File([urls], "urls.txt", { type: "text/plain;charset=utf-8" });
 
