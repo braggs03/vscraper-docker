@@ -14,7 +14,9 @@ use tokio::sync::{broadcast, mpsc, Mutex};
 use tracing::{error, info};
 use url::Url;
 
-use crate::ytdlp::{self, DownloadOptions, Status, YtdlpClient};
+use crate::core::ytdlp::{self, DownloadOptions, Status, YtdlpClient};
+
+// <----- AppState ----->
 
 #[derive(Clone)]
 struct AppState {
@@ -22,12 +24,21 @@ struct AppState {
     tx: Arc<Mutex<Sender<String>>>,
 }
 
-// support converting an `AppState` in an `ApiState`
 impl FromRef<AppState> for YtdlpClient {
     fn from_ref(app_state: &AppState) -> YtdlpClient {
         app_state.ytdlp_client.clone()
     }
 }
+
+// <----- DownloadRequest ----->
+
+#[derive(Deserialize, Serialize)]
+struct DownloadRequest {
+    url: Url,
+    options: DownloadOptions,
+}
+
+// <----- Routes ----->
 
 pub async fn routes(db: SqlitePool, ytdlp_path: String, download_path: PathBuf) -> Router {
     let (tx, _) = broadcast::channel::<String>(100);
@@ -48,11 +59,80 @@ pub async fn routes(db: SqlitePool, ytdlp_path: String, download_path: PathBuf) 
         .with_state(safe_tx)
 }
 
+// <----- Functions ----->
+
+async fn cancel_download(
+    State(ytdlp_client): State<YtdlpClient>,
+    Json(url): Json<Url>,
+) -> StatusCode {
+    match ytdlp_client.cancel_download(url.clone()).await {
+        Ok(status) => match status {
+            Status::Canceled => StatusCode::OK,
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
+        },
+        Err(_) => {
+            info!("cancel request for url: {}", url);
+            StatusCode::BAD_REQUEST
+        }
+    }
+}
+
+async fn download_from_options(
+    State(app_state): State<AppState>,
+    Json(download): Json<DownloadRequest>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    if let Err(err) = app_state
+        .ytdlp_client
+        .check_url_availability(&download.url, &download.options)
+        .await
+    {
+        return match err {
+            ytdlp::Error::FailedCheck => {
+                error!("check failed: {:?}", err);
+                Err((StatusCode::BAD_REQUEST, String::from("Bad download")))
+            }
+            ytdlp::Error::General { err } => {
+                Err((StatusCode::INTERNAL_SERVER_ERROR, err.kind().to_string()))
+            }
+            _ => unreachable!(),
+        };
+    }
+
+    let (download_update_tx, mut download_update_rx) = mpsc::channel(100);
+
+    tokio::task::spawn(async move {
+        while let Some(string) = download_update_rx.recv().await {
+            if let Err(err) = app_state.tx.lock().await.send(string) {
+                error!("failed to send download message to frontend: {}", err);
+            }
+        }
+    });
+
+    tokio::task::spawn(async move {
+        let _ = app_state
+            .ytdlp_client
+            .download_from_options(&download.url, &download.options, Some(download_update_tx))
+            .await;
+    });
+
+    Ok(StatusCode::CREATED)
+}
+
 async fn download_websocket(
     ws: WebSocketUpgrade,
     State(tx): State<Arc<Mutex<broadcast::Sender<String>>>>,
 ) -> impl IntoResponse {
     ws.on_upgrade(move |socket| handle_download_websocket(socket, tx))
+}
+
+async fn get_urls(State(ytdlp_client): State<YtdlpClient>) -> Result<String, StatusCode> {
+    match ytdlp_client.get_urls().await {
+        Ok(urls) => match serde_json::to_string(&urls) {
+            Ok(url_str) => Ok(url_str),
+            Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+        },
+        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
 }
 
 async fn handle_download_websocket(socket: WebSocket, tx: Arc<Mutex<broadcast::Sender<String>>>) {
@@ -80,74 +160,6 @@ async fn handle_download_websocket(socket: WebSocket, tx: Arc<Mutex<broadcast::S
             error!("sending message to client, client disconnected: {}", e);
             return;
         }
-    }
-}
-
-#[derive(Deserialize, Serialize)]
-struct DownloadRequest {
-    url: Url,
-    options: DownloadOptions,
-}
-
-async fn download_from_options(
-    State(app_state): State<AppState>,
-    Json(download): Json<DownloadRequest>,
-) -> Result<StatusCode, (StatusCode, String)> {
-    if let Err(err) = app_state
-        .ytdlp_client
-        .check_url_availability(&download.url, &download.options)
-        .await
-    {
-        return match err {
-            ytdlp::Error::FailedCheck => Err((StatusCode::BAD_REQUEST, String::from("Bad download"))),
-            ytdlp::Error::General { err } => Err((StatusCode::INTERNAL_SERVER_ERROR, err.kind().to_string())),
-            _ => unreachable!(),
-        };
-    }
-
-    let (download_update_tx, mut download_update_rx) = mpsc::channel(100);
-
-    tokio::task::spawn(async move {
-        while let Some(string) = download_update_rx.recv().await {
-            if let Err(err) = app_state.tx.lock().await.send(string) {
-                error!("failed to send download message to frontend: {}", err);
-            }
-        }
-    });
-
-    tokio::task::spawn(async move {
-        let _ = app_state
-            .ytdlp_client
-            .download_from_options(&download.url, &download.options, Some(download_update_tx))
-            .await;
-    });
-
-    Ok(StatusCode::CREATED)
-}
-
-async fn cancel_download(
-    State(ytdlp_client): State<YtdlpClient>,
-    Json(url): Json<Url>,
-) -> StatusCode {
-    match ytdlp_client.cancel_download(url.clone()).await {
-        Ok(status) => match status {
-            Status::Canceled => StatusCode::OK,
-            _ => StatusCode::INTERNAL_SERVER_ERROR,
-        },
-        Err(_) => {
-            info!("cancel request for url: {}", url);
-            StatusCode::BAD_REQUEST
-        }
-    }
-}
-
-async fn get_urls(State(ytdlp_client): State<YtdlpClient>) -> Result<String, StatusCode> {
-    match ytdlp_client.get_urls().await {
-        Ok(urls) => match serde_json::to_string(&urls) {
-            Ok(url_str) => Ok(url_str),
-            Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
-        },
-        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
     }
 }
 
