@@ -130,6 +130,83 @@ impl YtdlpClient {
         }
     }
 
+    pub async fn add_download(
+        &self,
+        url: &Url,
+        options: &DownloadOptions,
+        tx: Option<Sender<Signal>>,
+    ) -> Result<()> {
+        match self.downloads.contains_key(&url) {
+            true => Err(Error::DownloadAlreadyPresent),
+            false => {
+                self.downloads.insert(
+                    url.clone(),
+                    Download {
+                        options: options.clone(),
+                        status: Status::Running,
+                        tx,
+                    },
+                );
+
+                Ok(())
+            }
+        }
+    }
+
+    pub async fn cancel_download(&self, url: Url) -> Result<Status> {
+        match self.downloads.remove(&url) {
+            Some((_, download)) => match download {
+                Download {
+                    status: Status::Running,
+                    options,
+                    tx: Some(tx),
+                } => match tx.send(Signal::Cancel).await {
+                    Ok(_) => {
+                        self.downloads.insert(
+                            url,
+                            Download {
+                                status: Status::Canceled,
+                                options,
+                                tx: None,
+                            },
+                        );
+                        Ok(Status::Canceled)
+                    }
+                    Err(_) => Err(Error::FailedToHalt),
+                },
+                _ => Err(Error::NotDownloading),
+            },
+            None => Err(Error::NotDownloading),
+        }
+    }
+
+    /// Checks if yt-dlp is able to download the video(s) of the url with the given options.
+    /// # Errors
+    /// Possible error variants are: FailedCheck, General
+    pub async fn check_url_availability(&self, url: &Url, options: &DownloadOptions) -> Result<()> {
+        match Command::new(&self.ytdlp_path)
+            .arg("--simulate")
+            .arg("-o")
+            .arg(&options.name_format)
+            .arg("-f")
+            .arg(format!(
+                "bestvideo[height={}][ext={}]+bestaudio/best",
+                options.quality, options.container
+            ))
+            .arg(url.as_str())
+            .stderr(Stdio::null())
+            .stdout(Stdio::null())
+            .status()
+            .await
+        {
+            Ok(exit_status) => match exit_status.success() {
+                true => Ok(()),
+                false => Err(Error::FailedCheck),
+            },
+            Err(err) => Err(Error::General { err }),
+        }
+    }
+
     pub async fn download_from_options(
         &self,
         url: &Url,
@@ -139,20 +216,23 @@ impl YtdlpClient {
         let mut received_signal = None;
         let download_path = self.download_path.clone().join(&options.name_format);
         let (download_kill_tx, mut download_kill_rx) = mpsc::channel(100);
-        self.downloads.insert(
-            url.clone(),
-            Download {
-                status: Status::Running,
-                options: options.clone(),
-                tx: Some(download_kill_tx),
-            },
-        );
+
+        if let Err(err) = self
+            .add_download(url, options, Some(download_kill_tx))
+            .await
+        {
+            return Err(err);
+        }
 
         debug!("downloading from url");
         let mut child = Command::new(&self.ytdlp_path)
             .arg("--newline")
-            .arg("--rate-limit")
-            .arg("100K")
+            .arg("-f")
+            .arg(self.get_format(options))
+            .arg("--merge-output-format")
+            .arg(&options.container)
+            // .arg("--rate-limit")
+            // .arg("100K")
             .arg("-o")
             .arg(download_path)
             .arg(url.as_str())
@@ -208,7 +288,7 @@ impl YtdlpClient {
 
                     match signal {
                         Signal::Cancel => {
-                            self.remove_partial_files(&url, &options);
+                            self.remove_partial_files(&url, &options).await;
                         }
                         Signal::Pause => {} // Nothing should done, partially completed files should remain
                     }
@@ -259,8 +339,6 @@ impl YtdlpClient {
             },
             Err(_) => Status::Failed,
         };
-
-        Ok(Status::Completed)
     }
 
     // async fn add_download_handler(
@@ -286,31 +364,41 @@ impl YtdlpClient {
     //     Ok(())
     // }
 
-    pub async fn cancel_download(&self, url: Url) -> Result<Status> {
-        match self.downloads.remove(&url) {
-            Some((_, download)) => match download {
-                Download {
-                    status: Status::Running,
-                    options,
-                    tx: Some(tx),
-                } => match tx.send(Signal::Cancel).await {
-                    Ok(_) => {
-                        self.downloads.insert(
-                            url,
-                            Download {
-                                status: Status::Canceled,
-                                options,
-                                tx: None,
-                            },
-                        );
-                        Ok(Status::Canceled)
-                    }
-                    Err(_) => Err(Error::FailedToHalt),
-                },
-                _ => Err(Error::NotDownloading),
-            },
-            None => Err(Error::NotDownloading),
-        }
+    async fn get_filename(&self, url: &Url, options: &DownloadOptions) -> Option<String> {
+        let child = Command::new(&self.ytdlp_path)
+            .arg("-o")
+            .arg(&options.name_format)
+            .arg("--get-filename")
+            .arg(url.as_str())
+            .stderr(Stdio::null())
+            .stdout(Stdio::piped())
+            .output()
+            .await;
+
+        if let Ok(output) = child {
+            if output.status.success() {
+                let mut last_line = String::new();
+                let mut lines = output.stdout.lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    last_line = line;
+                }
+                return Some(last_line);
+            }
+        };
+
+        None
+    }
+
+    fn get_format(&self, options: &DownloadOptions) -> String {
+        format!("bestvideo[height={}]+bestaudio/best", &options.quality)
+    }
+
+    pub async fn get_urls(&self) -> Result<Vec<Url>> {
+        Ok(self
+            .downloads
+            .iter()
+            .map(|entry| entry.key().clone())
+            .collect())
     }
 
     pub async fn pause_download(&self, url: Url) -> Result<Status> {
@@ -340,61 +428,27 @@ impl YtdlpClient {
         }
     }
 
-    /// Checks if yt-dlp is able to download the video(s) of the url with the given options.
-    /// # Errors
-    /// Possible error variants are: FailedCheck, General
-    pub async fn check_url_availability(&self, url: &Url, options: &DownloadOptions) -> Result<()> {
-        match Command::new(&self.ytdlp_path)
-            .arg("--simulate")
-            .arg("-o")
-            .arg(&options.name_format)
-            .arg("-f")
-            .arg(format!("bestvideo[height={}]+bestaudio/best", options.quality))
-            .arg(url.as_str())
-            .stderr(Stdio::null())
-            .stdout(Stdio::null())
-            .status()
-            .await
-        {
-            Ok(exit_status) => match exit_status.success() {
-                true => Ok(()),
-                false => Err(Error::FailedCheck),
-            },
-            Err(err) => Err(Error::General { err }),
-        }
-    }
+    pub async fn modify_download(
+        &self,
+        url: &Url,
+        options: &DownloadOptions,
+        tx: Option<Sender<Signal>>,
+    ) -> Result<()> {
+        match self.downloads.contains_key(&url) {
+            true => Err(Error::DownloadAlreadyPresent),
+            false => {
+                self.downloads.insert(
+                    url.clone(),
+                    Download {
+                        options: options.clone(),
+                        status: Status::Running,
+                        tx,
+                    },
+                );
 
-    async fn get_filename(&self, url: &Url, options: &DownloadOptions) -> Option<String> {
-        let child = Command::new(&self.ytdlp_path)
-            .arg("-o")
-            .arg(&options.name_format)
-            .arg("--get-filename")
-            .arg(url.as_str())
-            .stderr(Stdio::null())
-            .stdout(Stdio::piped())
-            .output()
-            .await;
-
-        if let Ok(output) = child {
-            if output.status.success() {
-                let mut last_line = String::new();
-                let mut lines = output.stdout.lines();
-                while let Ok(Some(line)) = lines.next_line().await {
-                    last_line = line;
-                }
-                return Some(last_line);
+                Ok(())
             }
-        };
-
-        None
-    }
-
-    pub async fn get_urls(&self) -> Result<Vec<Url>> {
-        Ok(self
-            .downloads
-            .iter()
-            .map(|entry| entry.key().clone())
-            .collect())
+        }
     }
 
     async fn remove_partial_files(&self, url: &Url, options: &DownloadOptions) {

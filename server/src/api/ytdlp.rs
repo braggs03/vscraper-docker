@@ -49,6 +49,7 @@ pub async fn routes(db: SqlitePool, ytdlp_path: String, download_path: PathBuf) 
     Router::new()
         .route("/", post(download_from_options))
         .route("/cancel", post(cancel_download))
+        .route("/check", post(check_url_availability))
         .route("/pause", post(pause_download))
         .route("/urls", get(get_urls))
         .with_state(AppState {
@@ -74,6 +75,27 @@ async fn cancel_download(
             info!("cancel request for url: {}", url);
             StatusCode::BAD_REQUEST
         }
+    }
+}
+
+async fn check_url_availability(
+    State(ytdlp_client): State<YtdlpClient>,
+    Json(download): Json<DownloadRequest>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    match ytdlp_client
+        .check_url_availability(&download.url, &download.options)
+        .await
+    {
+        Ok(_) => Ok(StatusCode::OK),
+        Err(err) => match err {
+            ytdlp::Error::General { err } => {
+                Err((StatusCode::INTERNAL_SERVER_ERROR, err.kind().to_string()))
+            }
+            _ => {
+                error!("check failed: {:?}", err);
+                Err((StatusCode::BAD_REQUEST, String::from("Bad download")))
+            }
+        },
     }
 }
 
