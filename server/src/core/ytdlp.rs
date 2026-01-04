@@ -339,6 +339,8 @@ impl YtdlpClient {
             },
             Err(_) => Status::Failed,
         };
+        
+        todo!()
     }
 
     // async fn add_download_handler(
