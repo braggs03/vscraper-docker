@@ -8,11 +8,18 @@ use std::process::Stdio;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
+use tokio::sync::mpsc::Receiver;
 use tokio::sync::mpsc::{self, error::TryRecvError, Sender};
 use tracing::{debug, error, info, trace};
 use url::Url;
 
+// <----- Functions ----->
+
 const YTDLP_DOWNLOAD_UPDATE_REGEX: &str = r"\[download\]\s+(\d+(?:\.\d+)?)%\s+of\s+~?\s+?(\d+(?:\.\d+)?[GMK]iB)\s+at\s+(\d+\.\d+(?:[GMK]i)?B\/s)\s+ETA\s+((\d+:\d+)|(?:Unknown))";
+
+// <----- Types ----->
+
+// <----- Error & Result ----->
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -26,12 +33,16 @@ pub enum Error {
     General { err: std::io::Error },
 }
 
+// <----- YtdlpClient ----->
+
 #[derive(Clone)]
 pub struct YtdlpClient {
     download_path: PathBuf,
     pub downloads: Arc<DashMap<Url, Download>>,
     ytdlp_path: String,
 }
+
+// <----- Download ----->
 
 #[derive(Clone, Debug)]
 pub struct Download {
@@ -40,6 +51,8 @@ pub struct Download {
     tx: Option<Sender<Signal>>, // TODO - Rename this field.
 }
 
+// <----- DownloadOptions ----->
+
 #[derive(Clone, Debug, Deserialize, FromRow, Serialize)]
 pub struct DownloadOptions {
     pub container: String,
@@ -47,8 +60,10 @@ pub struct DownloadOptions {
     pub quality: String,
 }
 
-#[derive(Serialize)]
-struct DownloadProgress {
+// <----- DownloadProgress ----->
+
+#[derive(Debug, Serialize)]
+pub struct DownloadProgress {
     url: Url,
     percent: String,
     size_downloaded: String,
@@ -56,8 +71,9 @@ struct DownloadProgress {
     eta: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, sqlx::Type)]
-#[sqlx(type_name = "status")]
+// <----- Status ----->
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum Status {
     Canceled,
     Checking,
@@ -68,58 +84,17 @@ pub enum Status {
     Running,
 }
 
+// <----- Signal ----->
+
 #[derive(Clone)]
 pub enum Signal {
     Cancel,
     Pause,
 }
 
-impl From<String> for Status {
-    fn from(value: String) -> Self {
-        match value.as_str() {
-            "Canceled" => Status::Canceled,
-            "Completed" => Status::Completed,
-            "None" => Status::None,
-            "Paused" => Status::Paused,
-            "Running" => Status::Running,
-            _ => panic!("Wrong value in db."),
-        }
-    }
-}
+// <----- Impl ----->
 
-async fn init_from_db(db: SqlitePool) -> Arc<DashMap<Url, Download>> {
-    // let rows = sqlx::query!("SELECT * FROM Download").fetch_all(&db).await;
-    // let downloads = match rows {
-    //     Ok(rows) => {
-    //         let downloads: Vec<(Url, Status, DownloadOptions)> = rows
-    //             .into_iter()
-    //             .map(|row| {
-    //                 let url = Url::parse(&row.url).expect("Failed to parse URL");
-    //                 let status = Status::from(row.status);
-    //                 (
-    //                     url,
-    //                     status,
-    //                     DownloadOptions {
-    //                         container: row.container,
-    //                         name_format: row.name_format,
-    //                         quality: row.quality,
-    //                     },
-    //                 )
-    //             })
-    //             .collect();
-
-    //         downloads
-    //     }
-    //     Err(_) => todo!(),
-    // };
-
-    // let download_map = downloads
-    //     .into_iter()
-    //     .map(|x| (x.0, (x.1, x.2, None)))
-    //     .collect::<HashMap<_, (_, _, _)>>();
-    // Arc::new(Mutex::new(download_map))
-    Arc::new(DashMap::new())
-}
+// <----- YtdlpClient ----->
 
 impl YtdlpClient {
     pub async fn new(db: SqlitePool, ytdlp_path: String, download_path: PathBuf) -> YtdlpClient {
@@ -211,18 +186,11 @@ impl YtdlpClient {
         &self,
         url: &Url,
         options: &DownloadOptions,
-        download_update_tx: Option<Sender<String>>,
+        mut download_kill_rx: Receiver<Signal>,
+        download_update_tx: Option<Sender<DownloadProgress>>,
     ) -> Result<Status> {
         let mut received_signal = None;
         let download_path = self.download_path.clone().join(&options.name_format);
-        let (download_kill_tx, mut download_kill_rx) = mpsc::channel(100);
-
-        if let Err(err) = self
-            .add_download(url, options, Some(download_kill_tx))
-            .await
-        {
-            return Err(err);
-        }
 
         debug!("downloading from url");
         let mut child = Command::new(&self.ytdlp_path)
@@ -231,8 +199,8 @@ impl YtdlpClient {
             .arg(self.get_format(options))
             .arg("--merge-output-format")
             .arg(&options.container)
-            // .arg("--rate-limit")
-            // .arg("100K")
+            .arg("--rate-limit")
+            .arg("100K")
             .arg("-o")
             .arg(download_path)
             .arg(url.as_str())
@@ -315,10 +283,9 @@ impl YtdlpClient {
                         eta,
                     };
 
+                    trace!("download update: {:?}", download_update);
                     if let Some(ref download_update_tx) = download_update_tx {
-                        let send_result = download_update_tx
-                            .send(serde_json::to_string(&download_update).unwrap())
-                            .await;
+                        let send_result = download_update_tx.send(download_update).await;
 
                         server::handle_send(send_result);
                     }
@@ -339,8 +306,8 @@ impl YtdlpClient {
             },
             Err(_) => Status::Failed,
         };
-        
-        todo!()
+
+        Ok(status)
     }
 
     // async fn add_download_handler(
@@ -452,12 +419,10 @@ impl YtdlpClient {
             }
         }
     }
-
+    
     async fn remove_partial_files(&self, url: &Url, options: &DownloadOptions) {
-        let download_file_name = self.get_filename(url, options).await;
-        let download_dir_files = std::fs::read_dir(&self.download_path);
-        if let Some(download_file_name) = download_file_name {
-            for dir in download_dir_files {
+        if let Some(download_file_name) = self.get_filename(url, options).await {
+            while let Ok(dir) = std::fs::read_dir(&self.download_path) {
                 for file in dir {
                     match file {
                         Ok(file) => match file.file_name().into_string() {
@@ -522,4 +487,40 @@ impl YtdlpClient {
     //         }
     //     }
     // }
+}
+
+// <----- Functions ----->
+
+async fn init_from_db(db: SqlitePool) -> Arc<DashMap<Url, Download>> {
+    // let rows = sqlx::query!("SELECT * FROM Download").fetch_all(&db).await;
+    // let downloads = match rows {
+    //     Ok(rows) => {
+    //         let downloads: Vec<(Url, Status, DownloadOptions)> = rows
+    //             .into_iter()
+    //             .map(|row| {
+    //                 let url = Url::parse(&row.url).expect("Failed to parse URL");
+    //                 let status = Status::from(row.status);
+    //                 (
+    //                     url,
+    //                     status,
+    //                     DownloadOptions {
+    //                         container: row.container,
+    //                         name_format: row.name_format,
+    //                         quality: row.quality,
+    //                     },
+    //                 )
+    //             })
+    //             .collect();
+
+    //         downloads
+    //     }
+    //     Err(_) => todo!(),
+    // };
+
+    // let download_map = downloads
+    //     .into_iter()
+    //     .map(|x| (x.0, (x.1, x.2, None)))
+    //     .collect::<HashMap<_, (_, _, _)>>();
+    // Arc::new(Mutex::new(download_map))
+    Arc::new(DashMap::new())
 }
