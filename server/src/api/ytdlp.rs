@@ -6,15 +6,18 @@ use axum::routing::{any, get, post};
 use axum::{Json, Router};
 use futures_util::{sink::SinkExt, stream::StreamExt};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use sqlx::SqlitePool;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::broadcast::Sender;
 use tokio::sync::{broadcast, mpsc, Mutex};
-use tracing::{error, info};
+use tracing::{debug, error, info};
 use url::Url;
 
 use crate::core::ytdlp::{self, DownloadOptions, Status, YtdlpClient};
+
+// <----- Types ----->
 
 // <----- AppState ----->
 
@@ -24,18 +27,22 @@ struct AppState {
     tx: Arc<Mutex<Sender<String>>>,
 }
 
-impl FromRef<AppState> for YtdlpClient {
-    fn from_ref(app_state: &AppState) -> YtdlpClient {
-        app_state.ytdlp_client.clone()
-    }
-}
-
 // <----- DownloadRequest ----->
 
 #[derive(Deserialize, Serialize)]
 struct DownloadRequest {
     url: Url,
     options: DownloadOptions,
+}
+
+// <----- Impl ----->
+
+// <----- AppState ----->
+
+impl FromRef<AppState> for YtdlpClient {
+    fn from_ref(app_state: &AppState) -> YtdlpClient {
+        app_state.ytdlp_client.clone()
+    }
 }
 
 // <----- Routes ----->
@@ -103,6 +110,19 @@ async fn download_from_options(
     State(app_state): State<AppState>,
     Json(download): Json<DownloadRequest>,
 ) -> Result<StatusCode, (StatusCode, String)> {
+
+    let (download_kill_tx, download_kill_rx) = mpsc::channel(100);
+    if let Err(err) = app_state.ytdlp_client
+        .add_download(&download.url, &download.options, Some(download_kill_tx))
+        .await
+    {
+        return match err {
+            ytdlp::Error::DownloadAlreadyPresent => Err((StatusCode::BAD_REQUEST, String::from("Download Already Present"))),
+            ytdlp::Error::General { err } => Err((StatusCode::INTERNAL_SERVER_ERROR, err.kind().to_string())),
+            err => todo!("unhandled case: {:?}", err),
+        }
+    }
+
     if let Err(err) = app_state
         .ytdlp_client
         .check_url_availability(&download.url, &download.options)
@@ -111,30 +131,58 @@ async fn download_from_options(
         return match err {
             ytdlp::Error::FailedCheck => {
                 error!("check failed: {:?}", err);
-                Err((StatusCode::BAD_REQUEST, String::from("Bad download")))
+                // TODO - Remove download on failed check.
+                // TODO - Fix message
+                Err((StatusCode::BAD_REQUEST, String::from("Failed to Check URL - Most likely no format(s)/video(s) were found.")))
             }
             ytdlp::Error::General { err } => {
                 Err((StatusCode::INTERNAL_SERVER_ERROR, err.kind().to_string()))
             }
-            _ => unreachable!(),
+            err => todo!("unhandled case: {:?}", err),
         };
     }
 
     let (download_update_tx, mut download_update_rx) = mpsc::channel(100);
-
-    tokio::task::spawn(async move {
-        while let Some(string) = download_update_rx.recv().await {
-            if let Err(err) = app_state.tx.lock().await.send(string) {
-                error!("failed to send download message to frontend: {}", err);
+    tokio::task::spawn({
+        let app_state = app_state.clone();
+        let url = download.url.clone();
+        async move {
+            while let Some(progress_update) = download_update_rx.recv().await {
+                let _ = app_state.tx.lock().await.send(
+                    json!({
+                        "type": "download_update",
+                        "data": progress_update
+                    })
+                    .to_string(),
+                );
+                // Err doesn't matter - failure means client disconnected - continue sending for if client reconnects.
+                // if let Err(err) = app_state.tx.lock().await.send(string) {
+                //     error!("failed to send download message to frontend: {}", err);
+                //     break;
+                // }
             }
+            debug!("download update task closed for url: {}", url);
         }
     });
 
     tokio::task::spawn(async move {
-        let _ = app_state
+        match app_state
             .ytdlp_client
-            .download_from_options(&download.url, &download.options, Some(download_update_tx))
-            .await;
+            .download_from_options(&download.url, &download.options, download_kill_rx, Some(download_update_tx))
+            .await
+        {
+            Ok(status) => app_state.tx.lock().await.send(
+                json!({
+                    "type": "download_status",
+                    "data": status
+                })
+                .to_string(),
+            ),
+            Err(err) => match err {
+                ytdlp::Error::DownloadAlreadyPresent => todo!(),
+                unhandled_err => todo!("handle error: {:?}", unhandled_err)
+            },
+        }
     });
 
     Ok(StatusCode::CREATED)
