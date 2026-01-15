@@ -2,18 +2,18 @@ use dashmap::DashMap;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, SqlitePool};
-use std::fs;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
+use tokio::fs;
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::process::Command;
+use tokio::process::{Child, Command};
 use tokio::sync::mpsc::Receiver;
-use tokio::sync::mpsc::{self, error::TryRecvError, Sender};
+use tokio::sync::mpsc::{error::TryRecvError, Sender};
 use tracing::{debug, error, info, trace};
 use url::Url;
 
-// <----- Functions ----->
+// <----- Constants ----->
 
 const YTDLP_DOWNLOAD_UPDATE_REGEX: &str = r"\[download\]\s+(\d+(?:\.\d+)?)%\s+of\s+~?\s+?(\d+(?:\.\d+)?[GMK]iB)\s+at\s+(\d+\.\d+(?:[GMK]i)?B\/s)\s+ETA\s+((\d+:\d+)|(?:Unknown))";
 
@@ -25,7 +25,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug)]
 pub enum Error {
-    DownloadAlreadyPresent,
+    DownloadAlreadyPresent { status: Status },
     FailedCheck,
     FailedToComplete,
     FailedToHalt,
@@ -38,7 +38,7 @@ pub enum Error {
 #[derive(Clone)]
 pub struct YtdlpClient {
     download_path: PathBuf,
-    pub downloads: Arc<DashMap<Url, Download>>,
+    downloads: Arc<DashMap<Url, Download>>,
     ytdlp_path: String,
 }
 
@@ -48,16 +48,16 @@ pub struct YtdlpClient {
 pub struct Download {
     options: DownloadOptions,
     status: Status,
-    tx: Option<Sender<Signal>>, // TODO - Rename this field.
+    download_termination: Option<Sender<Signal>>,
 }
 
 // <----- DownloadOptions ----->
 
 #[derive(Clone, Debug, Deserialize, FromRow, Serialize)]
 pub struct DownloadOptions {
-    pub container: String,
-    pub name_format: String,
-    pub quality: String,
+    container: String,
+    name_format: String,
+    quality: String,
 }
 
 // <----- DownloadProgress ----->
@@ -76,10 +76,8 @@ pub struct DownloadProgress {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum Status {
     Canceled,
-    Checking,
     Completed,
     Failed,
-    None,
     Paused,
     Running,
 }
@@ -93,6 +91,14 @@ pub enum Signal {
 }
 
 // <----- Impl ----->
+
+// <----- Status ----->
+
+impl std::fmt::Display for Status {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self)
+    }
+}
 
 // <----- YtdlpClient ----->
 
@@ -111,15 +117,34 @@ impl YtdlpClient {
         options: &DownloadOptions,
         tx: Option<Sender<Signal>>,
     ) -> Result<()> {
-        match self.downloads.contains_key(&url) {
-            true => Err(Error::DownloadAlreadyPresent),
-            false => {
+        match self.downloads.remove(&url) {
+            Some((url, download)) => match download.status {
+                Status::Canceled | Status::Failed | Status::Paused => {
+                    self.downloads.insert(
+                        url.clone(),
+                        Download {
+                            options: options.clone(),
+                            status: Status::Running,
+                            download_termination: tx,
+                        },
+                    );
+
+                    Ok(())
+                }
+                Status::Completed | Status::Running => {
+                    self.downloads.insert(url, Download { status: download.status.clone(), ..download });
+                    Err(Error::DownloadAlreadyPresent {
+                        status: download.status,
+                    })
+                }
+            },
+            None => {
                 self.downloads.insert(
                     url.clone(),
                     Download {
                         options: options.clone(),
                         status: Status::Running,
-                        tx,
+                        download_termination: tx,
                     },
                 );
 
@@ -134,7 +159,7 @@ impl YtdlpClient {
                 Download {
                     status: Status::Running,
                     options,
-                    tx: Some(tx),
+                    download_termination: Some(tx),
                 } => match tx.send(Signal::Cancel).await {
                     Ok(_) => {
                         self.downloads.insert(
@@ -142,7 +167,7 @@ impl YtdlpClient {
                             Download {
                                 status: Status::Canceled,
                                 options,
-                                tx: None,
+                                download_termination: None,
                             },
                         );
                         Ok(Status::Canceled)
@@ -159,6 +184,10 @@ impl YtdlpClient {
     /// # Errors
     /// Possible error variants are: FailedCheck, General
     pub async fn check_url_availability(&self, url: &Url, options: &DownloadOptions) -> Result<()> {
+        debug!(
+            "running check for url: {}, with options: {:?}",
+            url, options
+        );
         match Command::new(&self.ytdlp_path)
             .arg("--simulate")
             .arg("-o")
@@ -223,50 +252,20 @@ impl YtdlpClient {
 
         while let Ok(Some(line)) = reader.next_line().await {
             trace!("ytdlp output: {}", line);
-            match download_kill_rx.try_recv() {
-                Ok(signal) => {
-                    received_signal = Some(signal.clone());
-                    let pid = child
-                        .id()
-                        .map_or("unknown".to_string(), |code| code.to_string());
-                    debug!("received kill signal for url: {}, pid: {}", url, pid);
-                    match child.kill().await {
-                        Ok(_) => {
-                            info!("successfully killed child for url: {}, pid: {}", url, pid);
-                            match child.wait().await {
-                                Ok(exit_status) => {
-                                    debug!(
-                                        "killed zombie child for url: {}, pid: {}, exit code: {}",
-                                        url, pid, exit_status
-                                    );
-                                }
-                                Err(err) => {
-                                    error!(
-                                        "failed to kill zombie child for url: {}, pid: {}, err: {}",
-                                        url, pid, err
-                                    );
-                                }
-                            }
-                        }
-                        Err(err) => error!(
-                            "failed to kill child for url: {}, pid: {} err: {}",
-                            url, pid, err
-                        ),
-                    }
 
-                    match signal {
-                        Signal::Cancel => {
-                            self.remove_partial_files(&url, &options).await;
-                        }
-                        Signal::Pause => {} // Nothing should done, partially completed files should remain
+            if let Some(signal) = self
+                .handle_kill_download(url, &mut child, &mut download_kill_rx)
+                .await
+            {
+                match signal {
+                    Signal::Cancel | Signal::Pause => {
+                        received_signal = Some(signal);
+                        break;
                     }
-                    break;
+                    _ => todo!(),
                 }
-                Err(TryRecvError::Disconnected) => {
-                    break;
-                }
-                Err(TryRecvError::Empty) => {}
             }
+
             if regex.is_match(&line) {
                 if let Some(captures) = regex.captures(&line) {
                     let url = url.clone();
@@ -293,21 +292,19 @@ impl YtdlpClient {
             }
         }
 
-        let status: Status = match child.wait().await {
+        match child.wait().await {
             Ok(status) => match status.success() {
-                true => Status::Completed,
+                true => Ok(Status::Completed),
                 false => match received_signal {
                     Some(signal) => match signal {
-                        Signal::Cancel => Status::Canceled,
-                        Signal::Pause => Status::Paused,
+                        Signal::Cancel => Ok(Status::Canceled),
+                        Signal::Pause => Ok(Status::Paused),
                     },
-                    None => Status::Failed,
+                    None => Err(Error::FailedToComplete),
                 },
             },
-            Err(_) => Status::Failed,
-        };
-
-        Ok(status)
+            Err(_) => Err(Error::FailedToComplete),
+        }
     }
 
     // async fn add_download_handler(
@@ -370,13 +367,56 @@ impl YtdlpClient {
             .collect())
     }
 
+    async fn handle_kill_download(
+        &self,
+        url: &Url,
+        child: &mut Child,
+        download_kill_rx: &mut Receiver<Signal>,
+    ) -> Option<Signal> {
+        match download_kill_rx.try_recv() {
+            Ok(signal) => {
+                let pid = child
+                    .id()
+                    .map_or("unknown".to_string(), |code| code.to_string());
+                debug!("received kill signal for url: {}, pid: {}", url, pid);
+                match child.kill().await {
+                    Ok(_) => {
+                        info!("successfully killed child for url: {}, pid: {}", url, pid);
+                        match child.wait().await {
+                            Ok(exit_status) => {
+                                debug!(
+                                    "killed zombie child for url: {}, pid: {}, exit code: {}",
+                                    url, pid, exit_status
+                                );
+                            }
+                            Err(err) => {
+                                error!(
+                                    "failed to kill zombie child for url: {}, pid: {}, err: {}",
+                                    url, pid, err
+                                );
+                            }
+                        }
+                    }
+                    Err(err) => error!(
+                        "failed to kill child for url: {}, pid: {} err: {}",
+                        url, pid, err
+                    ),
+                }
+
+                Some(signal)
+            }
+            Err(TryRecvError::Disconnected) => None, //TODO - What should this do? Kill download?
+            Err(TryRecvError::Empty) => None,
+        }
+    }
+
     pub async fn pause_download(&self, url: Url) -> Result<Status> {
         match self.downloads.remove(&url) {
             Some((_, download)) => match download {
                 Download {
                     status: Status::Running,
                     options,
-                    tx: Some(tx),
+                    download_termination: Some(tx),
                 } => match tx.send(Signal::Pause).await {
                     Ok(_) => {
                         self.downloads.insert(
@@ -384,7 +424,7 @@ impl YtdlpClient {
                             Download {
                                 status: Status::Paused,
                                 options,
-                                tx: None,
+                                download_termination: None,
                             },
                         );
                         Ok(Status::Paused)
@@ -404,14 +444,14 @@ impl YtdlpClient {
         tx: Option<Sender<Signal>>,
     ) -> Result<()> {
         match self.downloads.contains_key(&url) {
-            true => Err(Error::DownloadAlreadyPresent),
+            true => Err(Error::DownloadAlreadyPresent { status: todo!() }),
             false => {
                 self.downloads.insert(
                     url.clone(),
                     Download {
                         options: options.clone(),
                         status: Status::Running,
-                        tx,
+                        download_termination: tx,
                     },
                 );
 
@@ -419,10 +459,10 @@ impl YtdlpClient {
             }
         }
     }
-    
+
     async fn remove_partial_files(&self, url: &Url, options: &DownloadOptions) {
         if let Some(download_file_name) = self.get_filename(url, options).await {
-            while let Ok(dir) = std::fs::read_dir(&self.download_path) {
+            for dir in std::fs::read_dir(&self.download_path) {
                 for file in dir {
                     match file {
                         Ok(file) => match file.file_name().into_string() {

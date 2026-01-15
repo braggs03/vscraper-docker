@@ -1,5 +1,5 @@
 use axum::{
-    http::{HeaderName, Method},
+    http::{HeaderName, HeaderValue, Method},
     Router,
 };
 use serde::Deserialize;
@@ -7,7 +7,7 @@ use server::create_default_config;
 use sqlx::{sqlite::SqliteConnectOptions, SqlitePool};
 use std::{io::Error, str::FromStr};
 use tower_http::{
-    cors::{Any, CorsLayer},
+    cors::CorsLayer,
     services::ServeDir,
 };
 use tracing::Level;
@@ -26,6 +26,8 @@ struct Args {
     download_location: String,
     #[serde(default = "default_log_level")]
     log_level: String,
+    /// Comma separated addresses
+    origins: String,
     #[serde(default = "default_ytdlp_path")]
     ytdlp_path: String,
 }
@@ -59,7 +61,7 @@ async fn main() -> Result<(), Error> {
 
     tracing_subscriber::fmt()
         .with_max_level(
-            Level::from_str(&args.log_level).expect("couldn't pass log_level to known level"),
+            Level::from_str(&args.log_level).expect("couldn't convert log_level to known level"),
         )
         .init();
 
@@ -68,7 +70,7 @@ async fn main() -> Result<(), Error> {
         .create_if_missing(true);
     let db = SqlitePool::connect_with(options)
         .await
-        .expect("could create/connect with to the sqlite database.");
+        .expect("could not create/connect the sqlite database.");
     sqlx::migrate!("./migrations")
         .run(&db)
         .await
@@ -77,8 +79,14 @@ async fn main() -> Result<(), Error> {
 
     let cors = CorsLayer::new()
         .allow_methods([Method::GET, Method::POST])
-        .allow_origin(Any)
+        .allow_origin(
+            args.origins
+                .split(",")
+                .map(|origin| origin.parse::<HeaderValue>().expect("origin: {}, could not be parsed."))
+                .collect::<Vec<_>>(),
+        )
         .allow_headers([HeaderName::from_static("content-type")]);
+
     let static_dir = ServeDir::new("static");
     let app = Router::new()
         .nest(
@@ -88,7 +96,7 @@ async fn main() -> Result<(), Error> {
         .fallback_service(static_dir)
         .layer(cors);
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await?;
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app).await?; // TODO - .with_graceful_shutdown
 
     Ok(())
 }
