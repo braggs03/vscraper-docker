@@ -5,7 +5,6 @@ use sqlx::{FromRow, SqlitePool};
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
-use tokio::fs;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::mpsc::Receiver;
@@ -39,7 +38,7 @@ pub enum Error {
 pub struct YtdlpClient {
     download_path: PathBuf,
     downloads: Arc<DashMap<Url, Download>>,
-    ytdlp_path: String,
+    pub ytdlp_path: String,
 }
 
 // <----- Download ----->
@@ -56,7 +55,7 @@ pub struct Download {
 #[derive(Clone, Debug, Deserialize, FromRow, Serialize)]
 pub struct DownloadOptions {
     container: String,
-    name_format: String,
+    pub name_format: String,
     quality: String,
 }
 
@@ -91,6 +90,14 @@ pub enum Signal {
 }
 
 // <----- Impl ----->
+
+// <----- Error ----->
+
+impl From<std::io::Error> for Error {
+    fn from(err: std::io::Error) -> Self {
+        Error::General { err }
+    }
+}
 
 // <----- Status ----->
 
@@ -132,7 +139,13 @@ impl YtdlpClient {
                     Ok(())
                 }
                 Status::Completed | Status::Running => {
-                    self.downloads.insert(url, Download { status: download.status.clone(), ..download });
+                    self.downloads.insert(
+                        url,
+                        Download {
+                            status: download.status.clone(),
+                            ..download
+                        },
+                    );
                     Err(Error::DownloadAlreadyPresent {
                         status: download.status,
                     })
@@ -188,7 +201,8 @@ impl YtdlpClient {
             "running check for url: {}, with options: {:?}",
             url, options
         );
-        match Command::new(&self.ytdlp_path)
+
+        let mut child = Command::new(&self.ytdlp_path)
             .arg("--simulate")
             .arg("-o")
             .arg(&options.name_format)
@@ -198,16 +212,20 @@ impl YtdlpClient {
                 options.quality, options.container
             ))
             .arg(url.as_str())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .stdout(Stdio::null())
-            .status()
-            .await
-        {
-            Ok(exit_status) => match exit_status.success() {
-                true => Ok(()),
-                false => Err(Error::FailedCheck),
-            },
-            Err(err) => Err(Error::General { err }),
+            .spawn()?;
+
+        let stderr = child.stderr.take().unwrap();
+        let mut reader = BufReader::new(stderr).lines();
+        while let Ok(Some(line)) = reader.next_line().await {
+            trace!("ytdlp check error: {}", line);
+        }
+
+        if child.wait().await?.success() {
+            Ok(())
+        } else {
+            Err(Error::FailedCheck)
         }
     }
 
@@ -235,8 +253,7 @@ impl YtdlpClient {
             .arg(url.as_str())
             .stderr(Stdio::null())
             .stdout(Stdio::piped())
-            .spawn()
-            .unwrap();
+            .spawn()?;
 
         debug!(
             "spawned ytdlp download from url: {}, with pid: {}",
@@ -257,13 +274,8 @@ impl YtdlpClient {
                 .handle_kill_download(url, &mut child, &mut download_kill_rx)
                 .await
             {
-                match signal {
-                    Signal::Cancel | Signal::Pause => {
-                        received_signal = Some(signal);
-                        break;
-                    }
-                    _ => todo!(),
-                }
+                received_signal = Some(signal);
+                break;
             }
 
             if regex.is_match(&line) {
@@ -285,7 +297,6 @@ impl YtdlpClient {
                     trace!("download update: {:?}", download_update);
                     if let Some(ref download_update_tx) = download_update_tx {
                         let send_result = download_update_tx.send(download_update).await;
-
                         server::handle_send(send_result);
                     }
                 }
@@ -303,7 +314,7 @@ impl YtdlpClient {
                     None => Err(Error::FailedToComplete),
                 },
             },
-            Err(_) => Err(Error::FailedToComplete),
+            Err(err) => Err(Error::General { err }),
         }
     }
 
@@ -405,7 +416,7 @@ impl YtdlpClient {
 
                 Some(signal)
             }
-            Err(TryRecvError::Disconnected) => None, //TODO - What should this do? Kill download?
+            Err(TryRecvError::Disconnected) => None, //TODO - What should this do? Kill download? Unreachable?
             Err(TryRecvError::Empty) => None,
         }
     }
@@ -437,54 +448,77 @@ impl YtdlpClient {
         }
     }
 
-    pub async fn modify_download(
-        &self,
-        url: &Url,
-        options: &DownloadOptions,
-        tx: Option<Sender<Signal>>,
-    ) -> Result<()> {
-        match self.downloads.contains_key(&url) {
-            true => Err(Error::DownloadAlreadyPresent { status: todo!() }),
-            false => {
-                self.downloads.insert(
-                    url.clone(),
-                    Download {
-                        options: options.clone(),
-                        status: Status::Running,
-                        download_termination: tx,
-                    },
-                );
+    // pub async fn modify_download(
+    //     &self,
+    //     url: &Url,
+    //     options: &DownloadOptions,
+    //     tx: Option<Sender<Signal>>,
+    // ) -> Result<()> {
+    //     match self.downloads.contains_key(&url) {
+    //         true => Err(Error::DownloadAlreadyPresent { status: todo!() }),
+    //         false => {
+    //             self.downloads.insert(
+    //                 url.clone(),
+    //                 Download {
+    //                     options: options.clone(),
+    //                     status: Status::Running,
+    //                     download_termination: tx,
+    //                 },
+    //             );
 
-                Ok(())
+    //             Ok(())
+    //         }
+    //     }
+    // }
+
+    pub async fn get_download_urls(&self, url: &Url) -> Result<Vec<Url>> {
+        let output = Command::new(&self.ytdlp_path)
+            .arg("--flat-playlist")
+            .arg("--print")
+            .arg("%(url)s")
+            .arg(url.as_str())
+            .stderr(Stdio::null())
+            .stdout(Stdio::piped())
+            .output()
+            .await?;
+
+        let mut stdio_lines = output.stdout.lines();
+        let mut urls = Vec::new();
+        while let Ok(Some(line)) = stdio_lines.next_line().await {
+            if let Ok(url) = Url::parse(&line) {
+                debug!("found url: {}", url);
+                urls.push(url);
             }
         }
+
+        Ok(urls)
     }
 
-    async fn remove_partial_files(&self, url: &Url, options: &DownloadOptions) {
-        if let Some(download_file_name) = self.get_filename(url, options).await {
-            for dir in std::fs::read_dir(&self.download_path) {
-                for file in dir {
-                    match file {
-                        Ok(file) => match file.file_name().into_string() {
-                            Ok(file_name) => {
-                                if file_name.contains(&download_file_name) {
-                                    info!(
-                                        "removing file: {}",
-                                        file.file_name()
-                                            .into_string()
-                                            .unwrap_or("unknown".to_string())
-                                    );
-                                    let _ = fs::remove_file(file.path());
-                                }
-                            }
-                            Err(_) => todo!(),
-                        },
-                        Err(_) => todo!(),
-                    }
-                }
-            }
-        }
-    }
+    // async fn remove_partial_files(&self, url: &Url, options: &DownloadOptions) {
+    //     if let Some(download_file_name) = self.get_filename(url, options).await {
+    //         for dir in std::fs::read_dir(&self.download_path) {
+    //             for file in dir {
+    //                 match file {
+    //                     Ok(file) => match file.file_name().into_string() {
+    //                         Ok(file_name) => {
+    //                             if file_name.contains(&download_file_name) {
+    //                                 info!(
+    //                                     "removing file: {}",
+    //                                     file.file_name()
+    //                                         .into_string()
+    //                                         .unwrap_or("unknown".to_string())
+    //                                 );
+    //                                 let _ = fs::remove_file(file.path());
+    //                             }
+    //                         }
+    //                         Err(_) => todo!(),
+    //                     },
+    //                     Err(_) => todo!(),
+    //                 }
+    //             }
+    //         }
+    //     }
+    // }
 
     // async fn insert_download_db(
     //     &self,
