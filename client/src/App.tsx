@@ -22,9 +22,9 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
 
     const navigate = useNavigate();
     const [url, setUrl] = useState('');
-    const [quality, setQuality] = useState('Best');
-    const [nameFormat, _] = useState('%(title)s');
-    const [container, setContainer] = useState('MP4');
+    const [quality, setQuality] = useState('best');
+    const [nameFormat, _] = useState('%(title)s.%(ext)s');
+    const [container, setContainer] = useState('mp4');
     const [isAdvancedOptionsOpen, setIsAdvancedOptionsOpen] = useState(false);
     const [downloads, setDownloads] = useState<{ [key: string]: DownloadProgress }>({});
     const [isDownloading, setIsDownloading] = useState(false);
@@ -38,27 +38,36 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
     });
 
     useEffect(() => {
-        let ws = new WebSocket(new URL('download/ws', ws_api));
+        const connect = () => {
+            let ws = new WebSocket(new URL('download/ws', ws_api));
 
-        ws.onopen = () => {
-            console.log("opened download ws");
+            ws.onclose = () => {
+                console.log("download updated ws closed, retrying in 3s...");
+                setTimeout(connect, 3000);
+            };
+
+            ws.onerror = () => {
+                ws.close();
+            };
+
+            ws.onopen = () => {
+                console.log("opened download ws");
+            }
+
+            ws.onmessage = (event) => {
+                console.log(event.data);
+            };
+
+            ws.onerror = (error) => {
+                console.error('WebSocket Error:', error);
+            };
+
+            return () => {
+                ws.close();
+            };
         }
 
-        ws.onmessage = (event) => {
-            console.log(event.data);
-        };
-
-        ws.onerror = (error) => {
-            console.error('WebSocket Error:', error);
-        };
-
-        ws.onclose = (_: CloseEvent) => {
-
-        };
-
-        return () => {
-            ws.close();
-        };
+        connect();
     }, []);
 
     const { isPending, data } = useQuery({
@@ -160,10 +169,10 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
                         <SelectValue placeholder="Quality" />
                     </SelectTrigger>
                     <SelectContent>
-                        <SelectItem value="Best">Best</SelectItem>
-                        <SelectItem value="1080p">1080p</SelectItem>
-                        <SelectItem value="720p">720p</SelectItem>
-                        <SelectItem value="480p">480p</SelectItem>
+                        <SelectItem value="best">Best</SelectItem>
+                        <SelectItem value="1080">1080p</SelectItem>
+                        <SelectItem value="720">720p</SelectItem>
+                        <SelectItem value="480">480p</SelectItem>
                     </SelectContent>
                 </Select>
 
@@ -172,10 +181,10 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
                         <SelectValue placeholder="Format" />
                     </SelectTrigger>
                     <SelectContent>
-                        <SelectItem value="MP4">MP4</SelectItem>
-                        <SelectItem value="MKV">MKV</SelectItem>
-                        <SelectItem value="AVI">AVI</SelectItem>
-                        <SelectItem value="WebM">WebM</SelectItem>
+                        <SelectItem value="mp4">MP4</SelectItem>
+                        <SelectItem value="mkv">MKV</SelectItem>
+                        <SelectItem value="avi">AVI</SelectItem>
+                        <SelectItem value="webm">WebM</SelectItem>
                     </SelectContent>
                 </Select>
             </div>
