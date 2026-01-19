@@ -1,7 +1,9 @@
 {
     "cSpell.words": [
         "bestaudio",
+        "bestvideo",
         "dashmap",
+        "dotenv",
         "sqlx",
         "ytdlp"
     ]
