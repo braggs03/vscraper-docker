@@ -2,7 +2,9 @@
 /server/target
 /server/static
 /server/.env*
-/server/sqlite*
+/server/*.db
+/server/*-shm
+/server/*-wal
 
 # client
 ## Logs
