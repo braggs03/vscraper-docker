@@ -5,13 +5,12 @@ use axum::response::IntoResponse;
 use axum::routing::{any, get, post};
 use axum::{Json, Router};
 use futures_util::{sink::SinkExt, stream::StreamExt};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::json;
 use sqlx::SqlitePool;
 use std::path::PathBuf;
-use std::sync::Arc;
 use tokio::sync::broadcast::Sender;
-use tokio::sync::{broadcast, mpsc, Mutex};
+use tokio::sync::{broadcast, mpsc};
 use tracing::{debug, error, info};
 use url::Url;
 
@@ -21,15 +20,20 @@ use crate::core::ytdlp::{self, DownloadOptions, Status, YtdlpClient};
 
 // <----- AppState ----->
 
+/// AppState for download routes.
 #[derive(Clone)]
 struct AppState {
+    /// The yt-dlp client used for download related functions.
     ytdlp_client: YtdlpClient,
-    tx: Arc<Mutex<Sender<String>>>,
+    /// Communicate downloads change to frontend.
+    downloads_change_tx: Sender<String>,
+    /// Communicate download updates to frontend.
+    download_update_tx: Sender<String>,
 }
 
 // <----- DownloadRequest ----->
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize)]
 struct DownloadRequest {
     url: Url,
     options: DownloadOptions,
@@ -48,22 +52,24 @@ impl FromRef<AppState> for YtdlpClient {
 // <----- Routes ----->
 
 pub async fn routes(db: SqlitePool, ytdlp_path: String, download_path: PathBuf) -> Router {
-    let (tx, _) = broadcast::channel::<String>(100); // TODO - Fix 100 - Don't know.
+    let (download_update_tx, _) = broadcast::channel::<String>(100); // TODO - Fix 100 - Don't know.
+    let (downloads_change_tx, _) = broadcast::channel::<String>(100); // TODO - Fix 100 - Don't know.
     let ytdlp_client = YtdlpClient::new(db, ytdlp_path, download_path).await;
-
-    let safe_tx = Arc::new(Mutex::new(tx));
 
     Router::new()
         .route("/", post(download_from_options))
         .route("/cancel", post(cancel_download))
-        .route("/pause", post(pause_download))
+        // .route("/pause", post(pause_download))
         .route("/urls", get(get_urls))
         .with_state(AppState {
-            tx: safe_tx.clone(),
+            downloads_change_tx: downloads_change_tx.clone(),
+            download_update_tx: download_update_tx.clone(),
             ytdlp_client,
         })
         .route("/ws", any(download_update_websocket))
-        .with_state(safe_tx)
+        .with_state(download_update_tx)
+        .route("/ws_downloads_update", any(downloads_change_websocket))
+        .with_state(downloads_change_tx)
 }
 
 // <----- Functions ----->
@@ -111,21 +117,31 @@ async fn download_from_options(
     Json(download): Json<DownloadRequest>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     let (download_kill_tx, download_kill_rx) = mpsc::channel(100);
-    if let Err(err) = app_state
+    match app_state
         .ytdlp_client
         .add_download(&download.url, &download.options, Some(download_kill_tx))
         .await
     {
-        return match err {
-            ytdlp::Error::DownloadAlreadyPresent { status } => Err((
-                StatusCode::BAD_REQUEST,
-                format!("Download already present with status: {}", status),
-            )),
-            ytdlp::Error::General { err } => {
-                Err((StatusCode::INTERNAL_SERVER_ERROR, err.kind().to_string()))
-            }
-            err => todo!("unhandled case: {:?}", err),
-        };
+        Ok(_) => {
+            let _ = app_state.downloads_change_tx.send(
+                json!({
+                    "downloads": [app_state.ytdlp_client.get_downloads()]
+                })
+                .to_string(),
+            );
+        }
+        Err(err) => {
+            return match err {
+                ytdlp::Error::DownloadAlreadyPresent { status } => Err((
+                    StatusCode::BAD_REQUEST,
+                    format!("Download already present with status: {}", status),
+                )),
+                ytdlp::Error::General { err } => {
+                    Err((StatusCode::INTERNAL_SERVER_ERROR, err.kind().to_string()))
+                }
+                err => todo!("unhandled case: {:?}", err),
+            };
+        }
     }
 
     if let Err(err) = app_state
@@ -158,10 +174,9 @@ async fn download_from_options(
         let url = download.url.clone();
         async move {
             while let Some(progress_update) = download_update_rx.recv().await {
-                let _ = app_state.tx.lock().await.send(
+                let _ = app_state.download_update_tx.send(
                     json!({
-                        "type": "download_update",
-                        "data": progress_update
+                        "update": progress_update
                     })
                     .to_string(),
                 );
@@ -188,7 +203,7 @@ async fn download_from_options(
                 .await
             {
                 Ok(status) => {
-                    let _ = app_state.tx.lock().await.send(
+                    let _ = app_state.download_update_tx.send(
                         json!({
                             "type": "download_status",
                             "data": status
@@ -209,20 +224,20 @@ async fn download_from_options(
 
 async fn download_update_websocket(
     ws: WebSocketUpgrade,
-    State(tx): State<Arc<Mutex<broadcast::Sender<String>>>>,
+    State(tx): State<broadcast::Sender<String>>,
 ) -> impl IntoResponse {
     ws.on_upgrade(move |socket| handle_download_update_websocket(socket, tx))
 }
 
 async fn downloads_change_websocket(
     ws: WebSocketUpgrade,
-    State(tx): State<Arc<Mutex<broadcast::Sender<String>>>>,
+    State(tx): State<broadcast::Sender<String>>,
 ) -> impl IntoResponse {
     ws.on_upgrade(move |socket| handle_downloads_change_websocket(socket, tx))
 }
 
 async fn get_urls(State(ytdlp_client): State<YtdlpClient>) -> Result<String, StatusCode> {
-    match ytdlp_client.get_urls().await {
+    match ytdlp_client.get_present_urls().await {
         Ok(urls) => match serde_json::to_string(&urls) {
             Ok(url_str) => Ok(url_str),
             Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
@@ -231,19 +246,26 @@ async fn get_urls(State(ytdlp_client): State<YtdlpClient>) -> Result<String, Sta
     }
 }
 
-async fn handle_downloads_change_websocket(
-    socket: WebSocket,
-    tx: Arc<Mutex<broadcast::Sender<String>>>,
-) {
+async fn handle_downloads_change_websocket(socket: WebSocket, tx: broadcast::Sender<String>) {
+    let mut rx = tx.subscribe();
+
+    let (mut ws_tx, mut _ws_rx) = socket.split();
+
+    while let Ok(message) = rx.recv().await {
+        if let Err(e) = ws_tx
+            .send(axum::extract::ws::Message::Text(message.into()))
+            .await
+        {
+            error!("sending message to client, client disconnected: {}", e);
+            return;
+        }
+    }
 }
 
-async fn handle_download_update_websocket(
-    socket: WebSocket,
-    tx: Arc<Mutex<broadcast::Sender<String>>>,
-) {
-    let mut rx = tx.lock().await.subscribe();
+async fn handle_download_update_websocket(socket: WebSocket, tx: Sender<String>) {
+    let mut rx = tx.subscribe();
 
-    let (mut ws_tx, mut ws_rx) = socket.split();
+    let (mut ws_tx, mut _ws_rx) = socket.split();
 
     // tokio::spawn(async move {
     //     // Broadcast incoming messages from clients to all
@@ -256,7 +278,6 @@ async fn handle_download_update_websocket(
     //     }
     // });
 
-    // Broadcast to this client any messages received by the server
     while let Ok(message) = rx.recv().await {
         if let Err(e) = ws_tx
             .send(axum::extract::ws::Message::Text(message.into()))
@@ -268,15 +289,15 @@ async fn handle_download_update_websocket(
     }
 }
 
-async fn pause_download(
-    State(ytdlp_client): State<YtdlpClient>,
-    Json(url): Json<Url>,
-) -> StatusCode {
-    match ytdlp_client.pause_download(url).await {
-        Ok(status) => match status {
-            Status::Paused => StatusCode::OK,
-            _ => StatusCode::INTERNAL_SERVER_ERROR,
-        },
-        Err(_) => StatusCode::BAD_REQUEST,
-    }
-}
+// async fn pause_download(
+//     State(ytdlp_client): State<YtdlpClient>,
+//     Json(url): Json<Url>,
+// ) -> StatusCode {
+//     match ytdlp_client.pause_download(url).await {
+//         Ok(status) => match status {
+//             Status::Paused => StatusCode::OK,
+//             _ => StatusCode::INTERNAL_SERVER_ERROR,
+//         },
+//         Err(_) => StatusCode::BAD_REQUEST,
+//     }
+// }

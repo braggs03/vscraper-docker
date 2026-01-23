@@ -2,8 +2,10 @@ use dashmap::DashMap;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, SqlitePool};
+use strum_macros::EnumString;
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::str::FromStr;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
@@ -43,19 +45,20 @@ pub struct YtdlpClient {
 
 // <----- Download ----->
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Serialize)]
 pub struct Download {
     options: DownloadOptions,
     status: Status,
+    #[serde(skip_serializing)]
     download_termination: Option<Sender<Signal>>,
 }
 
 // <----- DownloadOptions ----->
 
-#[derive(Clone, Debug, Deserialize, FromRow, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct DownloadOptions {
     container: String,
-    pub name_format: String,
+    name_format: String,
     quality: String,
 }
 
@@ -72,7 +75,8 @@ pub struct DownloadProgress {
 
 // <----- Status ----->
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, EnumString, Serialize, sqlx::Type)]
+#[sqlx(type_name = "status")]
 pub enum Status {
     Canceled,
     Completed,
@@ -139,6 +143,7 @@ impl YtdlpClient {
                     Ok(())
                 }
                 Status::Completed | Status::Running => {
+                    // TODO - Compare options - if different, should a new download be added?
                     self.downloads.insert(
                         url,
                         Download {
@@ -207,10 +212,7 @@ impl YtdlpClient {
             .arg("-o")
             .arg(&options.name_format)
             .arg("-f")
-            .arg(format!(
-                "bestvideo[height={}][ext={}]+bestaudio/best",
-                options.quality, options.container
-            ))
+            .arg(self.get_format(&options))
             .arg(url.as_str())
             .stderr(Stdio::piped())
             .stdout(Stdio::null())
@@ -303,18 +305,15 @@ impl YtdlpClient {
             }
         }
 
-        match child.wait().await {
-            Ok(status) => match status.success() {
-                true => Ok(Status::Completed),
-                false => match received_signal {
-                    Some(signal) => match signal {
-                        Signal::Cancel => Ok(Status::Canceled),
-                        Signal::Pause => Ok(Status::Paused),
-                    },
-                    None => Err(Error::FailedToComplete),
+        match child.wait().await?.success() {
+            true => Ok(Status::Completed),
+            false => match received_signal {
+                Some(signal) => match signal {
+                    Signal::Cancel => Ok(Status::Canceled),
+                    Signal::Pause => Ok(Status::Paused),
                 },
+                None => Err(Error::FailedToComplete),
             },
-            Err(err) => Err(Error::General { err }),
         }
     }
 
@@ -341,36 +340,41 @@ impl YtdlpClient {
     //     Ok(())
     // }
 
-    async fn get_filename(&self, url: &Url, options: &DownloadOptions) -> Option<String> {
-        let child = Command::new(&self.ytdlp_path)
-            .arg("-o")
-            .arg(&options.name_format)
-            .arg("--get-filename")
-            .arg(url.as_str())
-            .stderr(Stdio::null())
-            .stdout(Stdio::piped())
-            .output()
-            .await;
+    // async fn get_filename(&self, url: &Url, options: &DownloadOptions) -> Option<String> {
+    //     let child = Command::new(&self.ytdlp_path)
+    //         .arg("-o")
+    //         .arg(&options.name_format)
+    //         .arg("--get-filename")
+    //         .arg(url.as_str())
+    //         .stderr(Stdio::null())
+    //         .stdout(Stdio::piped())
+    //         .output()
+    //         .await;
 
-        if let Ok(output) = child {
-            if output.status.success() {
-                let mut last_line = String::new();
-                let mut lines = output.stdout.lines();
-                while let Ok(Some(line)) = lines.next_line().await {
-                    last_line = line;
-                }
-                return Some(last_line);
-            }
-        };
+    //     // TODO - This should probably be fixed
+    //     if let Ok(output) = child {
+    //         if output.status.success() {
+    //             let mut last_line = String::new();
+    //             let mut lines = output.stdout.lines();
+    //             while let Ok(Some(line)) = lines.next_line().await {
+    //                 last_line = line;
+    //             }
+    //             return Some(last_line);
+    //         }
+    //     };
 
-        None
+    //     None
+    // }
+
+    pub fn get_downloads(&self) -> DashMap<Url, Download> {
+        (*self.downloads).clone()
     }
 
     fn get_format(&self, options: &DownloadOptions) -> String {
         format!("bestvideo[height={}]+bestaudio/best", &options.quality)
     }
 
-    pub async fn get_urls(&self) -> Result<Vec<Url>> {
+    pub async fn get_present_urls(&self) -> Result<Vec<Url>> {
         Ok(self
             .downloads
             .iter()
@@ -421,32 +425,32 @@ impl YtdlpClient {
         }
     }
 
-    pub async fn pause_download(&self, url: Url) -> Result<Status> {
-        match self.downloads.remove(&url) {
-            Some((_, download)) => match download {
-                Download {
-                    status: Status::Running,
-                    options,
-                    download_termination: Some(tx),
-                } => match tx.send(Signal::Pause).await {
-                    Ok(_) => {
-                        self.downloads.insert(
-                            url,
-                            Download {
-                                status: Status::Paused,
-                                options,
-                                download_termination: None,
-                            },
-                        );
-                        Ok(Status::Paused)
-                    }
-                    Err(_) => Err(Error::FailedToHalt),
-                },
-                _ => Err(Error::NotDownloading),
-            },
-            None => Err(Error::NotDownloading),
-        }
-    }
+    // pub async fn pause_download(&self, url: Url) -> Result<Status> {
+    //     match self.downloads.remove(&url) {
+    //         Some((_, download)) => match download {
+    //             Download {
+    //                 status: Status::Running,
+    //                 options,
+    //                 download_termination: Some(tx),
+    //             } => match tx.send(Signal::Pause).await {
+    //                 Ok(_) => {
+    //                     self.downloads.insert(
+    //                         url,
+    //                         Download {
+    //                             status: Status::Paused,
+    //                             options,
+    //                             download_termination: None,
+    //                         },
+    //                     );
+    //                     Ok(Status::Paused)
+    //                 }
+    //                 Err(_) => Err(Error::FailedToHalt),
+    //             },
+    //             _ => Err(Error::NotDownloading),
+    //         },
+    //         None => Err(Error::NotDownloading),
+    //     }
+    // }
 
     // pub async fn modify_download(
     //     &self,
@@ -471,7 +475,7 @@ impl YtdlpClient {
     //     }
     // }
 
-    pub async fn get_download_urls(&self, url: &Url) -> Result<Vec<Url>> {
+    pub async fn get_all_playlist_urls(&self, url: &Url) -> Result<Vec<Url>> {
         let output = Command::new(&self.ytdlp_path)
             .arg("--flat-playlist")
             .arg("--print")
@@ -573,7 +577,10 @@ async fn init_from_db(db: SqlitePool) -> Arc<DashMap<Url, Download>> {
     //             .into_iter()
     //             .map(|row| {
     //                 let url = Url::parse(&row.url).expect("Failed to parse URL");
-    //                 let status = Status::from(row.status);
+    //                 let status = Status::from_str(&row.status).unwrap_or({
+    //                     error!("failed to parse Status from db, defaulting to Status::Failed");
+    //                     Status::Failed
+    //                 });
     //                 (
     //                     url,
     //                     status,
@@ -593,8 +600,10 @@ async fn init_from_db(db: SqlitePool) -> Arc<DashMap<Url, Download>> {
 
     // let download_map = downloads
     //     .into_iter()
-    //     .map(|x| (x.0, (x.1, x.2, None)))
-    //     .collect::<HashMap<_, (_, _, _)>>();
-    // Arc::new(Mutex::new(download_map))
-    Arc::new(DashMap::new())
+    //     .map(|x| (x.0, Download { status: x.1, options: x.2, download_termination: None }))
+    //     .collect::<DashMap<_, _>>();
+
+    let download_map = DashMap::new();
+
+    Arc::new(download_map)
 }
