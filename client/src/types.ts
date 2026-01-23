@@ -17,6 +17,17 @@ export interface DownloadProgress {
     eta: string,
 }
 
+export interface DownloadOptions {
+    container: string;
+    name_format: string;
+    quality: string;
+}
+
+export interface DownloadEntry {
+    options: DownloadOptions;
+    status: string;
+}
+
 export enum Emission {
     FfmpegInstall = "ffmpeg_install",
     YtdlpDownloadUpdate = "ytdlp_download_update",

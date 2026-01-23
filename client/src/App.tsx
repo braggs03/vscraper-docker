@@ -11,7 +11,7 @@ import { Input } from "./components/ui/input";
 import { Label } from "./components/ui/label";
 import { Progress } from "./components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./components/ui/select";
-import { DownloadProgress } from './types';
+import { DownloadEntry } from './types';
 
 let api = import.meta.env.VITE_API_URL;
 let ws_api = import.meta.env.VITE_WS_API_URL;
@@ -26,7 +26,7 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
     const [nameFormat, _] = useState('%(title)s.%(ext)s');
     const [container, setContainer] = useState('mp4');
     const [isAdvancedOptionsOpen, setIsAdvancedOptionsOpen] = useState(false);
-    const [downloads, setDownloads] = useState<{ [key: string]: DownloadProgress }>({});
+    const [downloads, setDownloads] = useState<[string, DownloadEntry]>();
     const [isDownloading, setIsDownloading] = useState(false);
     const [downloadError, setDownloadError] = useState<string | null>(null);
     const [advancedOptions, setAdvancedOptions] = useState({
@@ -69,6 +69,45 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
 
         connect();
     }, []);
+
+    useEffect(() => {
+        const connect = () => {
+            let ws = new WebSocket(new URL('download/ws_downloads_update', ws_api));
+
+            ws.onclose = () => {
+                console.log("download updated ws closed, retrying in 3s...");
+                setTimeout(connect, 3000);
+            };
+
+            ws.onmessage = (event) => {
+                console.log(event.data);
+                const downloads_map = JSON.parse(event.data);
+                console.log(downloads_map);
+                let downloads = downloads_map.downloads
+                setDownloads(downloads);
+            };
+
+            ws.onerror = () => {
+                ws.close();
+            };
+
+            ws.onopen = () => {
+                console.log("opened downloads update ws");
+            }
+
+
+            ws.onerror = (error) => {
+                console.error('WebSocket Error:', error);
+            };
+
+            return () => {
+                ws.close();
+            };
+        }
+
+        connect();
+    }, []);
+
 
     const { isPending, data } = useQuery({
         queryKey: ['config'],
@@ -114,15 +153,6 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
             setDownloadError('Failed to start download');
         } finally {
             setIsDownloading(false);
-        }
-    };
-
-    const cancelDownload = async (downloadUrl: string) => {
-        try {
-            const { [downloadUrl]: _, ...remainingDownloads } = downloads;
-            setDownloads(remainingDownloads);
-        } catch (error) {
-            console.error('Cancel download failed:', error);
         }
     };
 
@@ -292,7 +322,7 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
                 </div>
             )}
 
-            {(
+            {/* {(
                 <div className="mt-4">
                     <h3 className="text-lg font-semibold mb-2">Downloading</h3>
                     <div className="space-y-2">
@@ -331,11 +361,7 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
                         ))}
                     </div>
                 </div>
-            )}
-
-            <Button variant="outline" className="w-full mb-2" onClick={() => navigate("/starter")}>
-                Back to Main Menu
-            </Button>
+            )} */}
         </main>
     );
 };
