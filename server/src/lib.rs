@@ -23,8 +23,7 @@ pub async fn create_default_config(db: &sqlx::SqlitePool) {
 }
 
 pub fn handle_send<T: std::fmt::Display>(send_result: Result<(), T>) {
-    match send_result {
-        Ok(_) => trace!("successful send to client."),
-        Err(err) => error!("send error: {}", err),
+    if let Err(err) = send_result {
+        error!("send error: {}", err);
     }
 }
