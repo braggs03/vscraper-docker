@@ -34,11 +34,12 @@ struct AppState {
 
 // <----- APIResponseType ----->
 
-#[derive(Serialize)]
-struct APIResponse<T: Serialize> {
-    #[serde(rename(serialize = "type"))]
+#[derive(Serialize, TS)]
+#[ts(export)]
+struct APIResponse {
+    #[serde(rename="type")]
     kind: APIResponseType,
-    data: T,
+    data: String,
 }
 
 // <----- APIResponseType ----->
@@ -196,7 +197,7 @@ async fn download_from_options(
                 let _ = app_state.download_update_tx.send(
                     serde_json::to_string(&APIResponse {
                         kind: APIResponseType::Update,
-                        data: progress_update,
+                        data: serde_json::to_string(&progress_update).unwrap(),
                     })
                     .unwrap(),
                 );

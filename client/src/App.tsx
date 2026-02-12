@@ -149,13 +149,12 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
     return (
         <>
             <Header />
-            <main className="flex flex-col items-center justify-center text-center min-h-screen max-w-md mx-auto space-y-4">
-                <div className="flex space-x-2">
+            <main className="flex flex-col items-center text-center space-y-2 mt-10">
+                <div className="flex flex-row w-full space-x-2 max-w-4xl">
                     <Input
                         placeholder="Enter video or playlist URL"
                         value={url}
                         onChange={(e) => setUrl(e.target.value)}
-                        className="grow"
                         disabled={isDownloading}
                     />
                     <Button
@@ -172,9 +171,9 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
                     </div>
                 )}
 
-                <div className="flex space-x-2">
+                <div className="flex flex-row w-full space-x-2 max-w-4xl">
                     <Select value={quality} onValueChange={setQuality} disabled={isDownloading}>
-                        <SelectTrigger className="w-full">
+                        <SelectTrigger className="flex-1 w-full">
                             <SelectValue placeholder="Quality" />
                         </SelectTrigger>
                         <SelectContent>
@@ -186,7 +185,7 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
                     </Select>
 
                     <Select value={container} onValueChange={setContainer} disabled={isDownloading}>
-                        <SelectTrigger className="w-full">
+                        <SelectTrigger className="flex-1 w-full">
                             <SelectValue placeholder="Format" />
                         </SelectTrigger>
                         <SelectContent>
@@ -196,115 +195,117 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
                             <SelectItem value="webm">WebM</SelectItem>
                         </SelectContent>
                     </Select>
-                </div>
 
-                <Button
-                    variant="outline"
-                    className="w-full"
-                    onClick={() => setIsAdvancedOptionsOpen(!isAdvancedOptionsOpen)}
-                    disabled={isDownloading}
-                >
-                    Advanced Options
-                </Button>
+                    <Button
+                        variant="outline"
+                        className="flex-1 w-full"
+                        onClick={() => setIsAdvancedOptionsOpen(!isAdvancedOptionsOpen)}
+                        disabled={isDownloading}
+                    >
+                        Advanced Options
+                    </Button>
 
-                {isAdvancedOptionsOpen && (
-                    <div className="space-y-4 p-4 border rounded-md w-full">
-                        <div className="flex space-x-2">
-                            <div className="flex-1">
-                                <Label>Auto Start</Label>
-                                <Select
-                                    value={advancedOptions.autoStart}
-                                    onValueChange={(value) => setAdvancedOptions(prev => ({
-                                        ...prev,
-                                        autoStart: value
-                                    }))}
-                                >
-                                    <SelectTrigger>
-                                        <SelectValue placeholder="Auto Start" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="Yes">Yes</SelectItem>
-                                        <SelectItem value="No">No</SelectItem>
-                                    </SelectContent>
-                                </Select>
+                    {isAdvancedOptionsOpen && (
+                        <div className="space-y-4 p-4 border rounded-md w-full max-w-md">
+                            <div className="flex flex-wrap gap-4">
+                                <div className="flex-1">
+                                    <Label>Auto Start</Label>
+                                    <Select
+                                        value={advancedOptions.autoStart}
+                                        onValueChange={(value) => setAdvancedOptions(prev => ({
+                                            ...prev,
+                                            autoStart: value
+                                        }))}
+                                    >
+                                        <SelectTrigger>
+                                            <SelectValue placeholder="Auto Start" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="Yes">Yes</SelectItem>
+                                            <SelectItem value="No">No</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="flex-1 min-w-[200px]">
+                                    <Label>Download Folder</Label>
+                                    <Select
+                                        value={advancedOptions.downloadFolder}
+                                        onValueChange={(value) => setAdvancedOptions(prev => ({
+                                            ...prev,
+                                            downloadFolder: value
+                                        }))}
+                                    >
+                                        <SelectTrigger>
+                                            <SelectValue placeholder="Download Folder" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="Default">Default</SelectItem>
+                                            <SelectItem value="Custom">Custom</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
                             </div>
-                            <div className="flex-1">
-                                <Label>Download Folder</Label>
-                                <Select
-                                    value={advancedOptions.downloadFolder}
-                                    onValueChange={(value) => setAdvancedOptions(prev => ({
-                                        ...prev,
-                                        downloadFolder: value
-                                    }))}
-                                >
-                                    <SelectTrigger>
-                                        <SelectValue placeholder="Download Folder" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="Default">Default</SelectItem>
-                                        <SelectItem value="Custom">Custom</SelectItem>
-                                    </SelectContent>
-                                </Select>
-                            </div>
-                        </div>
 
-                        <div className="flex space-x-2">
-                            <div className="flex-1">
-                                <Label>Custom Name Prefix</Label>
-                                <Input
-                                    placeholder="Default"
-                                    value={advancedOptions.customNamePrefix}
-                                    onChange={(e) => setAdvancedOptions(prev => ({
+                            <div className="flex flex-wrap gap-4">
+                                <div className="flex-1 min-w-[200px]">
+                                    <Label>Custom Name Prefix</Label>
+                                    <Input
+                                        placeholder="Default"
+                                        value={advancedOptions.customNamePrefix}
+                                        onChange={(e) => setAdvancedOptions(prev => ({
+                                            ...prev,
+                                            customNamePrefix: e.target.value
+                                        }))}
+                                    />
+                                </div>
+                                <div className="flex-1 min-w-[200px]">
+                                    <Label>Items Limit</Label>
+                                    <Select
+                                        value={advancedOptions.itemsLimit}
+                                        onValueChange={(value) => setAdvancedOptions(prev => ({
+                                            ...prev,
+                                            itemsLimit: value
+                                        }))}
+                                    >
+                                        <SelectTrigger>
+                                            <SelectValue placeholder="Items Limit" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="Default">Default</SelectItem>
+                                            <SelectItem value="5">5</SelectItem>
+                                            <SelectItem value="10">10</SelectItem>
+                                            <SelectItem value="25">25</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                            </div>
+
+                            <div className="flex items-center space-x-2 mt-4">
+                                <Checkbox
+                                    id="strict-playlist-mode"
+                                    checked={advancedOptions.strictPlaylistMode}
+                                    onCheckedChange={(checked) => setAdvancedOptions(prev => ({
                                         ...prev,
-                                        customNamePrefix: e.target.value
+                                        strictPlaylistMode: !!checked
                                     }))}
                                 />
+                                <Label htmlFor="strict-playlist-mode">Strict Playlist Mode</Label>
                             </div>
-                            <div className="flex-1">
-                                <Label>Items Limit</Label>
-                                <Select
-                                    value={advancedOptions.itemsLimit}
-                                    onValueChange={(value) => setAdvancedOptions(prev => ({
-                                        ...prev,
-                                        itemsLimit: value
-                                    }))}
-                                >
-                                    <SelectTrigger>
-                                        <SelectValue placeholder="Items Limit" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="Default">Default</SelectItem>
-                                        <SelectItem value="5">5</SelectItem>
-                                        <SelectItem value="10">10</SelectItem>
-                                        <SelectItem value="25">25</SelectItem>
-                                    </SelectContent>
-                                </Select>
+
+                            <div className="flex flex-wrap justify-center gap-2 mt-4">
+                                <Button variant="outline" className="flex-1 min-w-[120px]">Import URLs</Button>
+                                <Button variant="outline" className="flex-1 min-w-[120px]" onClick={() => handleUrlDownloads()}>Export URLs</Button>
                             </div>
                         </div>
+                    )}
+                </div>
 
-                        <div className="flex items-center space-x-2">
-                            <Checkbox
-                                id="strict-playlist-mode"
-                                checked={advancedOptions.strictPlaylistMode}
-                                onCheckedChange={(checked) => setAdvancedOptions(prev => ({
-                                    ...prev,
-                                    strictPlaylistMode: !!checked
-                                }))}
-                            />
-                            <Label htmlFor="strict-playlist-mode">Strict Playlist Mode</Label>
-                        </div>
-
-                        <div className="flex flex-row justify-center space-x-2 mt-4 space-y-2">
-                            <Button variant="outline" className="flex-1">Import URLs</Button>
-                            <Button variant="outline" className="flex-1" onClick={() => handleUrlDownloads()}>Export URLs</Button>
-                        </div>
-                    </div>
-                )}
+                <h2 className="w-full border-t border-b">Downloading</h2>
 
                 {/* {(
                 <div className="mt-4">
-                    <h3 className="text-lg font-semibold mb-2">Downloading</h3>
-                    <div className="space-y-2">
+                <h3 className="text-lg font-semibold mb-2">Downloading</h3>
+                <div className="space-y-2">
                         {Object.entries(downloads).map(([url, download]) => (
                             <div
                                 key={url}
