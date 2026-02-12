@@ -5,13 +5,14 @@ use axum::response::IntoResponse;
 use axum::routing::{any, get, post};
 use axum::{Json, Router};
 use futures_util::{sink::SinkExt, stream::StreamExt};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::SqlitePool;
 use std::path::PathBuf;
 use tokio::sync::broadcast::Sender;
 use tokio::sync::{broadcast, mpsc};
 use tracing::{debug, error, info};
+use ts_rs::TS;
 use url::Url;
 
 use crate::core::ytdlp::{self, DownloadOptions, Status, YtdlpClient};
@@ -29,6 +30,24 @@ struct AppState {
     downloads_change_tx: Sender<String>,
     /// Communicate download updates to frontend.
     download_update_tx: Sender<String>,
+}
+
+// <----- APIResponseType ----->
+
+#[derive(Serialize)]
+struct APIResponse<T: Serialize> {
+    #[serde(rename(serialize = "type"))]
+    kind: APIResponseType,
+    data: T,
+}
+
+// <----- APIResponseType ----->
+
+#[derive(Debug, Serialize, TS)]
+#[ts(export)]
+enum APIResponseType {
+    DownloadsChange,
+    Update,
 }
 
 // <----- DownloadRequest ----->
@@ -116,6 +135,30 @@ async fn download_from_options(
     State(app_state): State<AppState>,
     Json(download): Json<DownloadRequest>,
 ) -> Result<StatusCode, (StatusCode, String)> {
+    if let Err(err) = app_state
+        .ytdlp_client
+        .check_url_availability(&download.url, &download.options)
+        .await
+    {
+        return match err {
+            ytdlp::Error::FailedCheck => {
+                error!("check failed: {:?}", err);
+                // TODO - Remove download on failed check.
+                // TODO - Fix message
+                Err((
+                    StatusCode::BAD_REQUEST,
+                    String::from(
+                        "Failed to Check URL - Most likely no format(s)/video(s) were found.",
+                    ),
+                ))
+            }
+            ytdlp::Error::General { err } => {
+                Err((StatusCode::INTERNAL_SERVER_ERROR, err.kind().to_string()))
+            }
+            err => todo!("unhandled case: {:?}", err),
+        };
+    }
+
     let (download_kill_tx, download_kill_rx) = mpsc::channel(100);
     match app_state
         .ytdlp_client
@@ -144,30 +187,6 @@ async fn download_from_options(
         }
     }
 
-    if let Err(err) = app_state
-        .ytdlp_client
-        .check_url_availability(&download.url, &download.options)
-        .await
-    {
-        return match err {
-            ytdlp::Error::FailedCheck => {
-                error!("check failed: {:?}", err);
-                // TODO - Remove download on failed check.
-                // TODO - Fix message
-                Err((
-                    StatusCode::BAD_REQUEST,
-                    String::from(
-                        "Failed to Check URL - Most likely no format(s)/video(s) were found.",
-                    ),
-                ))
-            }
-            ytdlp::Error::General { err } => {
-                Err((StatusCode::INTERNAL_SERVER_ERROR, err.kind().to_string()))
-            }
-            err => todo!("unhandled case: {:?}", err),
-        };
-    }
-
     let (download_update_tx, mut download_update_rx) = mpsc::channel(100);
     tokio::task::spawn({
         let app_state = app_state.clone();
@@ -175,10 +194,11 @@ async fn download_from_options(
         async move {
             while let Some(progress_update) = download_update_rx.recv().await {
                 let _ = app_state.download_update_tx.send(
-                    json!({
-                        "update": progress_update
+                    serde_json::to_string(&APIResponse {
+                        kind: APIResponseType::Update,
+                        data: progress_update,
                     })
-                    .to_string(),
+                    .unwrap(),
                 );
                 // Err doesn't matter - failure means client disconnected - continue sending for if client reconnects.
                 // if let Err(err) = app_state.tx.lock().await.send(string) {

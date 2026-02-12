@@ -1,7 +1,7 @@
-use tracing::{error, trace};
+use tracing::error;
 
 pub async fn create_default_config(db: &sqlx::SqlitePool) {
-    match sqlx::query!(
+    if let Err(err) = sqlx::query!(
         r#"INSERT INTO Config (
             id,
             skip_homepage
@@ -15,10 +15,7 @@ pub async fn create_default_config(db: &sqlx::SqlitePool) {
     .execute(db)
     .await
     {
-        Ok(_) => {}
-        Err(err) => {
-            panic!("failed to create default config: {}", err);
-        }
+        panic!("failed to create default config: {}", err);
     }
 }
 

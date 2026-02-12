@@ -11,16 +11,16 @@ const queryClient = new QueryClient();
 function Root() {
     const [hasSeenHomepage, setHasSeenHomepage] = useState(false);
     return (
-        <ThemeProvider defaultTheme="light" storageKey="vite-ui-theme">
-            <QueryClientProvider client={queryClient}>
+        <QueryClientProvider client={queryClient}>
+            <ThemeProvider defaultTheme="light" storageKey="vite-ui-theme">
                 <BrowserRouter>
                     <Routes>
                         <Route path="/" element={<App hasSeenHomepage={hasSeenHomepage} />} />
                         <Route path="/starter" element={<Homepage onGetStarted={() => setHasSeenHomepage(true)} />} />
                     </Routes>
                 </BrowserRouter>
-            </QueryClientProvider>
-        </ThemeProvider>
+            </ThemeProvider>
+        </QueryClientProvider >
     );
 }
 

@@ -7,11 +7,13 @@ use axum::{
 use serde::Serialize;
 use serde_json::Value;
 use sqlx::SqlitePool;
+use ts_rs::TS;
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 struct Config {
-    id: Option<i64>,
-    skip_homepage: Option<bool>,
+    id: i64,
+    skip_homepage: bool,
 }
 
 pub fn routes(db: SqlitePool) -> Router {

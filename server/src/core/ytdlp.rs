@@ -1,17 +1,17 @@
 use dashmap::DashMap;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use sqlx::{FromRow, SqlitePool};
-use strum_macros::EnumString;
+use sqlx::SqlitePool;
 use std::path::PathBuf;
 use std::process::Stdio;
-use std::str::FromStr;
 use std::sync::Arc;
+use strum_macros::EnumString;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::mpsc::{error::TryRecvError, Sender};
 use tracing::{debug, error, info, trace};
+use ts_rs::TS;
 use url::Url;
 
 // <----- Constants ----->
@@ -64,7 +64,8 @@ pub struct DownloadOptions {
 
 // <----- DownloadProgress ----->
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
+#[ts(export)]
 pub struct DownloadProgress {
     url: Url,
     percent: String,
@@ -248,12 +249,12 @@ impl YtdlpClient {
             .arg(self.get_format(options))
             .arg("--merge-output-format")
             .arg(&options.container)
-            .arg("--rate-limit")
-            .arg("100K")
+            // .arg("--rate-limit")
+            // .arg("100K")
             .arg("-o")
             .arg(download_path)
             .arg(url.as_str())
-            .stderr(Stdio::null())
+            .stderr(Stdio::inherit())
             .stdout(Stdio::piped())
             .spawn()?;
 

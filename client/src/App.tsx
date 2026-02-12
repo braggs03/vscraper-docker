@@ -1,16 +1,17 @@
-import {
-    useQuery,
-} from '@tanstack/react-query';
-import saveAs from 'file-saver';
 import { useEffect, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router';
-import "./App.css";
+import "./index.css";
 import { Button } from "./components/ui/button";
 import { Checkbox } from "./components/ui/checkbox";
 import { Input } from "./components/ui/input";
 import { Label } from "./components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./components/ui/select";
-import { DownloadEntry } from './types';
+import Header from './components/Header';
+import type { APIResponse } from './types/APIResponse';
+import type { DownloadEntry } from './types';
+import {
+    useQuery,
+} from '@tanstack/react-query'
 
 let api = import.meta.env.VITE_API_URL;
 let ws_api = import.meta.env.VITE_WS_API_URL;
@@ -54,7 +55,23 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
             }
 
             ws.onmessage = (event) => {
-                console.log(event.data);
+                let response: APIResponse = JSON.parse(event.data);
+                console.dir(response);
+                if (response.type) {
+                    switch (response.type) {
+                        case "Update":
+                            console.log("got progress update");
+                            break;
+
+                        case "DownloadsChange":
+                            console.log("got downloads update");
+                            break;
+
+                        default:
+                            // Exhaustiveness check
+                            const _never: never = response.type;
+                    }
+                }
             };
 
             ws.onerror = (error) => {
@@ -68,45 +85,6 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
 
         connect();
     }, []);
-
-    useEffect(() => {
-        const connect = () => {
-            let ws = new WebSocket(new URL('download/ws_downloads_update', ws_api));
-
-            ws.onclose = () => {
-                console.log("download updated ws closed, retrying in 3s...");
-                setTimeout(connect, 3000);
-            };
-
-            ws.onmessage = (event) => {
-                console.log(event.data);
-                const downloads_map = JSON.parse(event.data);
-                console.log(downloads_map);
-                let downloads = downloads_map.downloads
-                setDownloads(downloads);
-            };
-
-            ws.onerror = () => {
-                ws.close();
-            };
-
-            ws.onopen = () => {
-                console.log("opened downloads update ws");
-            }
-
-
-            ws.onerror = (error) => {
-                console.error('WebSocket Error:', error);
-            };
-
-            return () => {
-                ws.close();
-            };
-        }
-
-        connect();
-    }, []);
-
 
     const { isPending, data } = useQuery({
         queryKey: ['config'],
@@ -157,171 +135,173 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
 
     const handleUrlDownloads = async () => {
 
-        let urls = await fetch(new URL("download/urls", api)).then((res) =>
-            res.json(),
-        );
+        // let urls = await fetch(new URL("download/urls", api)).then((res) =>
+        //     res.json(),
+        // );
 
-        urls = urls.join('\n');
+        // urls = urls.join('\n');
 
-        const file = new File([urls], "urls.txt", { type: "text/plain;charset=utf-8" });
+        // const file = new File([urls], "urls.txt", { type: "text/plain;charset=utf-8" });
 
-        saveAs(file);
+        // saveAs(file);
     }
 
     return (
-        <main className="flex flex-col items-center justify-center text-center min-h-screen max-w-md mx-auto space-y-4">
-            <div className="flex space-x-2">
-                <Input
-                    placeholder="Enter video or playlist URL"
-                    value={url}
-                    onChange={(e) => setUrl(e.target.value)}
-                    className="grow"
-                    disabled={isDownloading}
-                />
-                <Button
-                    onClick={handleDownload}
-                    disabled={isDownloading || !url}
-                >
-                    Download
-                </Button>
-            </div>
-
-            {downloadError && (
-                <div className="text-red-500 text-sm mb-2">
-                    {downloadError}
+        <>
+            <Header />
+            <main className="flex flex-col items-center justify-center text-center min-h-screen max-w-md mx-auto space-y-4">
+                <div className="flex space-x-2">
+                    <Input
+                        placeholder="Enter video or playlist URL"
+                        value={url}
+                        onChange={(e) => setUrl(e.target.value)}
+                        className="grow"
+                        disabled={isDownloading}
+                    />
+                    <Button
+                        onClick={handleDownload}
+                        disabled={!url || isDownloading || !/^(http(s)?:\/\/)?([\w-]+\.)+[\w-]+(\/[\w-./?%&=]*)?$/.test(url)}
+                    >
+                        Download
+                    </Button>
                 </div>
-            )}
 
-            <div className="flex space-x-2">
-                <Select value={quality} onValueChange={setQuality} disabled={isDownloading}>
-                    <SelectTrigger className="w-full">
-                        <SelectValue placeholder="Quality" />
-                    </SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="best">Best</SelectItem>
-                        <SelectItem value="1080">1080p</SelectItem>
-                        <SelectItem value="720">720p</SelectItem>
-                        <SelectItem value="480">480p</SelectItem>
-                    </SelectContent>
-                </Select>
-
-                <Select value={container} onValueChange={setContainer} disabled={isDownloading}>
-                    <SelectTrigger className="w-full">
-                        <SelectValue placeholder="Format" />
-                    </SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="mp4">MP4</SelectItem>
-                        <SelectItem value="mkv">MKV</SelectItem>
-                        <SelectItem value="avi">AVI</SelectItem>
-                        <SelectItem value="webm">WebM</SelectItem>
-                    </SelectContent>
-                </Select>
-            </div>
-
-            <Button
-                variant="outline"
-                className="w-full"
-                onClick={() => setIsAdvancedOptionsOpen(!isAdvancedOptionsOpen)}
-                disabled={isDownloading}
-            >
-                Advanced Options
-            </Button>
-
-            {isAdvancedOptionsOpen && (
-                <div className="space-y-4 p-4 border rounded-md w-full">
-                    <div className="flex space-x-2">
-                        <div className="flex-1">
-                            <Label>Auto Start</Label>
-                            <Select
-                                value={advancedOptions.autoStart}
-                                onValueChange={(value) => setAdvancedOptions(prev => ({
-                                    ...prev,
-                                    autoStart: value
-                                }))}
-                            >
-                                <SelectTrigger>
-                                    <SelectValue placeholder="Auto Start" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="Yes">Yes</SelectItem>
-                                    <SelectItem value="No">No</SelectItem>
-                                </SelectContent>
-                            </Select>
-                        </div>
-                        <div className="flex-1">
-                            <Label>Download Folder</Label>
-                            <Select
-                                value={advancedOptions.downloadFolder}
-                                onValueChange={(value) => setAdvancedOptions(prev => ({
-                                    ...prev,
-                                    downloadFolder: value
-                                }))}
-                            >
-                                <SelectTrigger>
-                                    <SelectValue placeholder="Download Folder" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="Default">Default</SelectItem>
-                                    <SelectItem value="Custom">Custom</SelectItem>
-                                </SelectContent>
-                            </Select>
-                        </div>
+                {downloadError && (
+                    <div className="text-red-500 text-sm mb-2">
+                        {downloadError}
                     </div>
+                )}
 
-                    <div className="flex space-x-2">
-                        <div className="flex-1">
-                            <Label>Custom Name Prefix</Label>
-                            <Input
-                                placeholder="Default"
-                                value={advancedOptions.customNamePrefix}
-                                onChange={(e) => setAdvancedOptions(prev => ({
+                <div className="flex space-x-2">
+                    <Select value={quality} onValueChange={setQuality} disabled={isDownloading}>
+                        <SelectTrigger className="w-full">
+                            <SelectValue placeholder="Quality" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="best">Best</SelectItem>
+                            <SelectItem value="1080">1080p</SelectItem>
+                            <SelectItem value="720">720p</SelectItem>
+                            <SelectItem value="480">480p</SelectItem>
+                        </SelectContent>
+                    </Select>
+
+                    <Select value={container} onValueChange={setContainer} disabled={isDownloading}>
+                        <SelectTrigger className="w-full">
+                            <SelectValue placeholder="Format" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="mp4">MP4</SelectItem>
+                            <SelectItem value="mkv">MKV</SelectItem>
+                            <SelectItem value="avi">AVI</SelectItem>
+                            <SelectItem value="webm">WebM</SelectItem>
+                        </SelectContent>
+                    </Select>
+                </div>
+
+                <Button
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => setIsAdvancedOptionsOpen(!isAdvancedOptionsOpen)}
+                    disabled={isDownloading}
+                >
+                    Advanced Options
+                </Button>
+
+                {isAdvancedOptionsOpen && (
+                    <div className="space-y-4 p-4 border rounded-md w-full">
+                        <div className="flex space-x-2">
+                            <div className="flex-1">
+                                <Label>Auto Start</Label>
+                                <Select
+                                    value={advancedOptions.autoStart}
+                                    onValueChange={(value) => setAdvancedOptions(prev => ({
+                                        ...prev,
+                                        autoStart: value
+                                    }))}
+                                >
+                                    <SelectTrigger>
+                                        <SelectValue placeholder="Auto Start" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="Yes">Yes</SelectItem>
+                                        <SelectItem value="No">No</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            <div className="flex-1">
+                                <Label>Download Folder</Label>
+                                <Select
+                                    value={advancedOptions.downloadFolder}
+                                    onValueChange={(value) => setAdvancedOptions(prev => ({
+                                        ...prev,
+                                        downloadFolder: value
+                                    }))}
+                                >
+                                    <SelectTrigger>
+                                        <SelectValue placeholder="Download Folder" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="Default">Default</SelectItem>
+                                        <SelectItem value="Custom">Custom</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                        </div>
+
+                        <div className="flex space-x-2">
+                            <div className="flex-1">
+                                <Label>Custom Name Prefix</Label>
+                                <Input
+                                    placeholder="Default"
+                                    value={advancedOptions.customNamePrefix}
+                                    onChange={(e) => setAdvancedOptions(prev => ({
+                                        ...prev,
+                                        customNamePrefix: e.target.value
+                                    }))}
+                                />
+                            </div>
+                            <div className="flex-1">
+                                <Label>Items Limit</Label>
+                                <Select
+                                    value={advancedOptions.itemsLimit}
+                                    onValueChange={(value) => setAdvancedOptions(prev => ({
+                                        ...prev,
+                                        itemsLimit: value
+                                    }))}
+                                >
+                                    <SelectTrigger>
+                                        <SelectValue placeholder="Items Limit" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="Default">Default</SelectItem>
+                                        <SelectItem value="5">5</SelectItem>
+                                        <SelectItem value="10">10</SelectItem>
+                                        <SelectItem value="25">25</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                        </div>
+
+                        <div className="flex items-center space-x-2">
+                            <Checkbox
+                                id="strict-playlist-mode"
+                                checked={advancedOptions.strictPlaylistMode}
+                                onCheckedChange={(checked) => setAdvancedOptions(prev => ({
                                     ...prev,
-                                    customNamePrefix: e.target.value
+                                    strictPlaylistMode: !!checked
                                 }))}
                             />
+                            <Label htmlFor="strict-playlist-mode">Strict Playlist Mode</Label>
                         </div>
-                        <div className="flex-1">
-                            <Label>Items Limit</Label>
-                            <Select
-                                value={advancedOptions.itemsLimit}
-                                onValueChange={(value) => setAdvancedOptions(prev => ({
-                                    ...prev,
-                                    itemsLimit: value
-                                }))}
-                            >
-                                <SelectTrigger>
-                                    <SelectValue placeholder="Items Limit" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="Default">Default</SelectItem>
-                                    <SelectItem value="5">5</SelectItem>
-                                    <SelectItem value="10">10</SelectItem>
-                                    <SelectItem value="25">25</SelectItem>
-                                </SelectContent>
-                            </Select>
+
+                        <div className="flex flex-row justify-center space-x-2 mt-4 space-y-2">
+                            <Button variant="outline" className="flex-1">Import URLs</Button>
+                            <Button variant="outline" className="flex-1" onClick={() => handleUrlDownloads()}>Export URLs</Button>
                         </div>
                     </div>
+                )}
 
-                    <div className="flex items-center space-x-2">
-                        <Checkbox
-                            id="strict-playlist-mode"
-                            checked={advancedOptions.strictPlaylistMode}
-                            onCheckedChange={(checked) => setAdvancedOptions(prev => ({
-                                ...prev,
-                                strictPlaylistMode: !!checked
-                            }))}
-                        />
-                        <Label htmlFor="strict-playlist-mode">Strict Playlist Mode</Label>
-                    </div>
-
-                    <div className="flex flex-row justify-center space-x-2 mt-4 space-y-2">
-                        <Button variant="outline" className="flex-1">Import URLs</Button>
-                        <Button variant="outline" className="flex-1" onClick={() => handleUrlDownloads()}>Export URLs</Button>
-                    </div>
-                </div>
-            )}
-
-            {/* {(
+                {/* {(
                 <div className="mt-4">
                     <h3 className="text-lg font-semibold mb-2">Downloading</h3>
                     <div className="space-y-2">
@@ -361,7 +341,8 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
                     </div>
                 </div>
             )} */}
-        </main>
+            </main>
+        </>
     );
 };
 
