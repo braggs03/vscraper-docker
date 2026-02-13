@@ -1,18 +1,53 @@
-FROM node:slim as client-builder
-WORKDIR /client-builder
-COPY ./client .
-RUN npm i && npm run build
+# -----------------------------
+# 1️⃣ Build client (Vite)
+# -----------------------------
+FROM node:20-alpine AS client-builder
 
-FROM rust:1-alpine3.18 as server-builder
-WORKDIR /server-builder
-COPY ./server .
-RUN apk update && apk add --no-cache musl-dev
-RUN cargo build --release --locked
+WORKDIR /client
+COPY client/package*.json ./
+RUN npm install
 
-FROM alpine:3.18
+COPY client/ .
+RUN npm run build
+
+# -----------------------------
+# 2️⃣ Build Rust server
+# -----------------------------
+FROM rust:bullseye AS server-builder
+
 WORKDIR /app
-COPY --from=server-builder /server-builder/target/release/server . 
-COPY --from=client-builder /client-builder/dist/ ./static/
-ENV RUST_LOG info
+
+# Install build dependencies
+RUN apt update
+RUN apt install -y musl-dev
+
+# Copy manifests first (for better caching)
+COPY server/Cargo.toml server/Cargo.lock ./
+
+# Dummy main to cache deps
+RUN mkdir src && echo "fn main() {}" > src/main.rs
+RUN cargo build --release
+RUN rm -rf src
+
+# Copy real source
+COPY server/src ./src
+COPY server/.sqlx ./.sqlx
+COPY server/migrations ./migrations
+
+RUN cargo build --release
+
+# -----------------------------
+# 3️⃣ Final runtime image
+# -----------------------------
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY --from=server-builder /app/target/release/server ./server
+COPY --from=client-builder /client/dist ./static
+
 EXPOSE 3000
-ENTRYPOINT [ "./server" ]
+
+CMD ["./server"]
