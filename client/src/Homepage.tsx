@@ -1,17 +1,14 @@
+import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
-import "./index.css";
-import { useTheme } from "./components/theme-provider";
+import Header from "./components/Header";
 import { Button } from "./components/ui/button";
 import { Checkbox } from "./components/ui/checkbox";
 import { Label } from "./components/ui/label";
-import { useQuery } from "@tanstack/react-query";
-import Header from "./components/Header";
-
-let api = import.meta.env.VITE_API_URL;
+import "./index.css";
 
 const updatePreference = (preference: boolean) => {
-    fetch(new URL(`config/homepage/${preference}`, api), {
+    fetch(`/api/config/homepage/${preference}`, {
         method: "post"
     })
 }
@@ -23,7 +20,7 @@ export default function Homepage({ onGetStarted }: { onGetStarted: () => void })
     const { isPending, data } = useQuery({
         queryKey: ['config'],
         queryFn: () =>
-            fetch(new URL("/api/config", api)).then((res) =>
+            fetch("/api/config").then((res) =>
                 res.json(),
 
             ),

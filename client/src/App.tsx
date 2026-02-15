@@ -1,26 +1,24 @@
+
+import {
+    useQuery,
+} from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
-import { Navigate, useNavigate } from 'react-router';
-import "./index.css";
+import { Navigate } from 'react-router';
+import Header from './components/Header';
 import { Button } from "./components/ui/button";
 import { Checkbox } from "./components/ui/checkbox";
 import { Input } from "./components/ui/input";
 import { Label } from "./components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./components/ui/select";
-import Header from './components/Header';
+import "./index.css";
 import type { APIResponse } from './types/APIResponse';
-import type { DownloadEntry } from './types';
-import {
-    useQuery,
-} from '@tanstack/react-query'
 
-let api = import.meta.env.VITE_API_URL;
-let ws_api = import.meta.env.VITE_WS_API_URL;
+// const ws_api = `ws://${import.meta.env.VITE_API_URL}`;
 
 const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
 
     // <----- State ----->
 
-    const navigate = useNavigate();
     const [url, setUrl] = useState('');
     const [quality, setQuality] = useState('best');
     const [nameFormat, _] = useState('%(title)s.%(ext)s');
@@ -39,7 +37,7 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
 
     useEffect(() => {
         const connect = () => {
-            let ws = new WebSocket(new URL('download/ws', ws_api));
+            let ws = new WebSocket("/api/download/ws");
 
             ws.onclose = () => {
                 console.log("download updated ws closed, retrying in 3s...");
@@ -68,8 +66,7 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
                             break;
 
                         default:
-                            // Exhaustiveness check
-                            const _never: never = response.type;
+                        // Exhaustiveness check
                     }
                 }
             };
@@ -89,7 +86,7 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
     const { isPending, data } = useQuery({
         queryKey: ['config'],
         queryFn: () =>
-            fetch(new URL("/api/config", api)).then((res) =>
+            fetch("/api/config").then((res) =>
                 res.json(),
             ),
     });
@@ -109,7 +106,7 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
         setDownloadError(null);
 
         try {
-            const response = await fetch(new URL("download", api), {
+            const response = await fetch("/api/download", {
                 method: "POST",
                 body: JSON.stringify({
                     "url": url,
@@ -134,7 +131,6 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
     };
 
     const handleUrlDownloads = async () => {
-
         // let urls = await fetch(new URL("download/urls", api)).then((res) =>
         //     res.json(),
         // );
@@ -149,16 +145,18 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
     return (
         <>
             <Header />
-            <main className="flex flex-col items-center text-center space-y-2 mt-10">
-                <div className="flex flex-row w-full space-x-2 max-w-4xl">
+            <main className="flex flex-col items-center text-center space-y-4 mt-10">
+                <div className="flex flex-row w-full max-w-4xl">
                     <Input
                         placeholder="Enter video or playlist URL"
                         value={url}
+                        className="rounded-r-none border-r-0"
                         onChange={(e) => setUrl(e.target.value)}
                         disabled={isDownloading}
                     />
                     <Button
                         onClick={handleDownload}
+                        className="rounded-l-none border border-color"
                         disabled={!url || isDownloading || !/^(http(s)?:\/\/)?([\w-]+\.)+[\w-]+(\/[\w-./?%&=]*)?$/.test(url)}
                     >
                         Download
@@ -171,7 +169,7 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
                     </div>
                 )}
 
-                <div className="flex flex-row w-full space-x-2 max-w-4xl">
+                <div className="flex flex-row w-full space-x-4 max-w-4xl">
                     <Select value={quality} onValueChange={setQuality} disabled={isDownloading}>
                         <SelectTrigger className="flex-1 w-full">
                             <SelectValue placeholder="Quality" />
@@ -226,7 +224,7 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
                                         </SelectContent>
                                     </Select>
                                 </div>
-                                <div className="flex-1 min-w-[200px]">
+                                <div className="flex-1">
                                     <Label>Download Folder</Label>
                                     <Select
                                         value={advancedOptions.downloadFolder}
@@ -247,7 +245,7 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
                             </div>
 
                             <div className="flex flex-wrap gap-4">
-                                <div className="flex-1 min-w-[200px]">
+                                <div className="flex-1">
                                     <Label>Custom Name Prefix</Label>
                                     <Input
                                         placeholder="Default"
@@ -258,7 +256,7 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
                                         }))}
                                     />
                                 </div>
-                                <div className="flex-1 min-w-[200px]">
+                                <div className="flex-1">
                                     <Label>Items Limit</Label>
                                     <Select
                                         value={advancedOptions.itemsLimit}
@@ -293,14 +291,18 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
                             </div>
 
                             <div className="flex flex-wrap justify-center gap-2 mt-4">
-                                <Button variant="outline" className="flex-1 min-w-[120px]">Import URLs</Button>
-                                <Button variant="outline" className="flex-1 min-w-[120px]" onClick={() => handleUrlDownloads()}>Export URLs</Button>
+                                <Button variant="outline" className="flex-1">Import URLs</Button>
+                                <Button variant="outline" className="flex-1" onClick={() => handleUrlDownloads()}>Export URLs</Button>
                             </div>
                         </div>
                     )}
                 </div>
 
-                <h2 className="w-full border-t border-b">Downloading</h2>
+                <h2 className="flex w-full border-t border-b text-4xl justify-center">
+                    <p className="max-w-5xl w-full text-left">
+                        Downloading
+                    </p>
+                </h2>
 
                 {/* {(
                 <div className="mt-4">

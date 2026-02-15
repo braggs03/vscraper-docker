@@ -1,12 +1,9 @@
-use axum::{
-    http::{HeaderName, HeaderValue, Method},
-    Router,
-};
+use axum::Router;
 use serde::Deserialize;
 use server::create_default_config;
 use sqlx::{sqlite::SqliteConnectOptions, SqlitePool};
 use std::{io::Error, str::FromStr};
-use tower_http::{cors::CorsLayer, services::ServeDir};
+use tower_http::services::ServeDir;
 use tracing::Level;
 
 mod api;
@@ -17,15 +14,20 @@ mod error;
 
 #[derive(Deserialize, Debug)]
 struct Args {
+    #[serde(default = "default_database_location")]
     database_url: String,
     #[serde(default = "default_download_location")]
     download_location: String,
     #[serde(default = "default_log_level")]
     log_level: String,
     /// Comma separated addresses
-    origins: String,
+    _origins: String,
     #[serde(default = "default_ytdlp_path")]
     ytdlp_path: String,
+}
+
+fn default_database_location() -> String {
+    String::from("sqlite://sqlite")
 }
 
 fn default_download_location() -> String {
@@ -60,6 +62,7 @@ async fn main() -> Result<(), Error> {
     let options = SqliteConnectOptions::from_str(&args.database_url)
         .unwrap()
         .create_if_missing(true);
+
     let db = SqlitePool::connect_with(options)
         .await
         .expect("could not create/connect the sqlite database.");
@@ -69,28 +72,28 @@ async fn main() -> Result<(), Error> {
         .expect("failed to run migrations on db.");
     create_default_config(&db).await;
 
-    let cors = CorsLayer::new()
-        .allow_methods([Method::GET, Method::POST])
-        .allow_origin(
-            args.origins
-                .split(",")
-                .map(|origin| {
-                    origin
-                        .parse::<HeaderValue>()
-                        .expect("origin could not be parsed.")
-                })
-                .collect::<Vec<_>>(),
-        )
-        .allow_headers([HeaderName::from_static("content-type")]);
+    // let cors = CorsLayer::new()
+    //     .allow_methods([Method::GET, Method::POST])
+    //     .allow_origin(
+    //         // args.origins
+    //         //     .split(",")
+    //         //     .map(|origin| {
+    //         //         origin
+    //         //             .parse::<HeaderValue>()
+    //         //             .expect("origin could not be parsed.")
+    //         //     })
+    //         //     .collect::<Vec<_>>(),
+    //         Any
+    //     )
+    //     .allow_headers([HeaderName::from_static("content-type")]);
 
-    let static_dir = ServeDir::new("static");
     let app = Router::new()
         .nest(
             "/api",
             api::routes(db, args.ytdlp_path, args.download_location.into()).await,
         )
-        .fallback_service(static_dir)
-        .layer(cors);
+        .fallback_service(ServeDir::new("static"));
+        // .layer(cors);
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await?;
     axum::serve(listener, app).await?; // TODO - .with_graceful_shutdown
 
