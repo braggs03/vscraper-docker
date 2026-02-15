@@ -33,3 +33,4 @@
 /client/*.sln
 /client/*.sw?
 /client/.env*
+/client/src/types
