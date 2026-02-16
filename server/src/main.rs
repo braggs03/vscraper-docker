@@ -21,7 +21,7 @@ struct Args {
     #[serde(default = "default_log_level")]
     log_level: String,
     /// Comma separated addresses
-    _origins: String,
+    // _origins: String,
     #[serde(default = "default_ytdlp_path")]
     ytdlp_path: String,
 }
