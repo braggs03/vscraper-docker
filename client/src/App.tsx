@@ -12,6 +12,7 @@ import { Label } from "./components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./components/ui/select";
 import "./index.css";
 import type { APIResponse } from './types/APIResponse';
+import type { Download } from './types/Download';
 
 // const ws_api = `ws://${import.meta.env.VITE_API_URL}`;
 
@@ -24,7 +25,7 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
     const [nameFormat, _] = useState('%(title)s.%(ext)s');
     const [container, setContainer] = useState('mp4');
     const [isAdvancedOptionsOpen, setIsAdvancedOptionsOpen] = useState(false);
-    const [downloads, setDownloads] = useState<[string, DownloadEntry]>();
+    const [downloads, setDownloads] = useState<[string, Download]>();
     const [isDownloading, setIsDownloading] = useState(false);
     const [downloadError, setDownloadError] = useState<string | null>(null);
     const [advancedOptions, setAdvancedOptions] = useState({
@@ -145,7 +146,7 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
     return (
         <>
             <Header />
-            <main className="flex flex-col items-center text-center space-y-4 mt-10">
+            <main className="flex flex-col items-center text-center space-y-4 mt-10 mr-4 mb-4 ml-4">
                 <div className="flex flex-row w-full max-w-4xl">
                     <Input
                         placeholder="Enter video or playlist URL"
@@ -298,7 +299,7 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
                     )}
                 </div>
 
-                <h2 className="flex w-full border-t border-b text-4xl justify-center">
+                <h2 className="flex w-full border-t border-b text-4xl justify-center py-3">
                     <p className="max-w-5xl w-full text-left">
                         Downloading
                     </p>
