@@ -45,17 +45,19 @@ pub struct YtdlpClient {
 
 // <----- Download ----->
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, TS)]
+#[ts(export)]
 pub struct Download {
     options: DownloadOptions,
     status: Status,
-    #[serde(skip_serializing)]
+    #[serde(skip)]
     download_termination: Option<Sender<Signal>>,
 }
 
 // <----- DownloadOptions ----->
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[ts(export)]
 pub struct DownloadOptions {
     container: String,
     name_format: String,
@@ -76,8 +78,9 @@ pub struct DownloadProgress {
 
 // <----- Status ----->
 
-#[derive(Clone, Debug, Deserialize, EnumString, Serialize, sqlx::Type)]
+#[derive(Clone, Debug, Deserialize, EnumString, Serialize, sqlx::Type, TS)]
 #[sqlx(type_name = "status")]
+#[ts(export)]
 pub enum Status {
     Canceled,
     Completed,
