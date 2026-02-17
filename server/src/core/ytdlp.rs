@@ -69,6 +69,7 @@ pub struct DownloadOptions {
 #[derive(Debug, Serialize, TS)]
 #[ts(export)]
 pub struct DownloadProgress {
+    #[serde(skip)]
     url: Url,
     percent: String,
     size_downloaded: String,
