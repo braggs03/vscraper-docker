@@ -9,12 +9,11 @@ import { Button } from "./components/ui/button";
 import { Checkbox } from "./components/ui/checkbox";
 import { Input } from "./components/ui/input";
 import { Label } from "./components/ui/label";
+import { Progress } from './components/ui/progress';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./components/ui/select";
 import "./index.css";
+import type { DownloadEntry } from './types';
 import type { APIResponse } from './types/APIResponse';
-import type { Download } from './types/Download';
-
-// const ws_api = `ws://${import.meta.env.VITE_API_URL}`;
 
 const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
 
@@ -25,7 +24,7 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
     const [nameFormat, _] = useState('%(title)s.%(ext)s');
     const [container, setContainer] = useState('mp4');
     const [isAdvancedOptionsOpen, setIsAdvancedOptionsOpen] = useState(false);
-    const [downloads, setDownloads] = useState<[string, Download]>();
+    const [downloads, setDownloads] = useState<DownloadEntry[]>([]);
     const [isDownloading, setIsDownloading] = useState(false);
     const [downloadError, setDownloadError] = useState<string | null>(null);
     const [advancedOptions, setAdvancedOptions] = useState({
@@ -105,7 +104,6 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
     const handleDownload = async () => {
         setIsDownloading(true);
         setDownloadError(null);
-
         try {
             const response = await fetch("/api/download", {
                 method: "POST",
@@ -121,6 +119,31 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
                     "Content-Type": "application/json",
                 }
             });
+
+            if (response.ok) {
+                const download: DownloadEntry = {
+                    url,
+                    download: {
+                        options: {
+                            container: container,
+                            name_format: nameFormat,
+                            quality: quality
+                        },
+                        status: "Running"
+                    },
+                    download_progress: {
+                        percent: "0",
+                        size_downloaded: "0",
+                        speed: "0",
+                        eta: "0"
+                    }
+                };
+
+                setDownloads([
+                    ...downloads,
+                    download
+                ]);
+            }
 
             console.dir(response);
         } catch (error) {
@@ -158,7 +181,7 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
                     <Button
                         onClick={handleDownload}
                         className="rounded-l-none border border-color"
-                        disabled={!url || isDownloading || !/^(http(s)?:\/\/)?([\w-]+\.)+[\w-]+(\/[\w-./?%&=]*)?$/.test(url)}
+                        disabled={isDownloading || !url || !/^(http(s)?:\/\/)?([\w-]+\.)+[\w-]+(\/[\w-./?%&=]*)?$/.test(url)}
                     >
                         Download
                     </Button>
@@ -304,37 +327,35 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
                         Downloading
                     </p>
                 </h2>
-
-                {/* {(
                 <div className="mt-4">
-                <h3 className="text-lg font-semibold mb-2">Downloading</h3>
-                <div className="space-y-2">
+                    <div className="space-y-2">
+                        {Array.from(downloads.keys()).map(key => (
+                            <li key={key}>{`${key}: ${downloads[key]}`}</li>
+                        ))}
                         {Object.entries(downloads).map(([url, download]) => (
                             <div
-                                key={url}
                                 className="flex items-center space-x-2 p-2 border rounded-md"
                             >
                                 <div className="grow">
                                     <div className="flex justify-between">
                                         <span className="text-sm truncate max-w-50">{url}</span>
-                                        <span className="text-sm">{download.percent}%</span>
+                                        <span className="text-sm">{download.download_progress.percent}%</span>
                                     </div>
                                     <div className="w-full bg-gray-200 rounded-full h-2.5 dark:bg-gray-700 mt-1">
                                         <Progress
                                             className="bg-blue-600 h-2.5 rounded-full"
-                                            value={Number(download.percent)}
+                                            value={Number(download.download_progress.percent)}
                                         ></Progress>
                                     </div>
                                     <div className="flex justify-between text-xs text-gray-500 mt-1">
-                                        <span>{download.speed}</span>
-                                        <span>ETA: {download.eta}</span>
+                                        <span>{download.download_progress.speed}</span>
+                                        <span>ETA: {download.download_progress.eta}</span>
                                     </div>
                                 </div>
                                 <div className="flex space-x-2">
                                     <Button
                                         variant="ghost"
                                         size="icon"
-                                        onClick={() => cancelDownload(url)}
                                     >
                                     </Button>
                                     <Button variant="ghost" size="icon">
@@ -344,7 +365,6 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
                         ))}
                     </div>
                 </div>
-            )} */}
             </main>
         </>
     );
