@@ -1,8 +1,9 @@
 use axum::Router;
+use regex::Replacer;
 use serde::Deserialize;
 use server::create_default_config;
 use sqlx::{sqlite::SqliteConnectOptions, SqlitePool};
-use std::{io::Error, str::FromStr};
+use std::{io::Error, path::{Path, PathBuf}, str::FromStr};
 use tower_http::services::ServeDir;
 use tracing::Level;
 
@@ -14,24 +15,18 @@ mod error;
 
 #[derive(Deserialize, Debug)]
 struct Args {
-    #[serde(default = "default_database_location")]
+    #[serde(default = "default_database_name")]
+    database_name: String,
     database_url: String,
-    #[serde(default = "default_download_location")]
     download_location: String,
     #[serde(default = "default_log_level")]
     log_level: String,
-    /// Comma separated addresses
-    // _origins: String,
     #[serde(default = "default_ytdlp_path")]
     ytdlp_path: String,
 }
 
-fn default_database_location() -> String {
-    String::from("sqlite://sqlite")
-}
-
-fn default_download_location() -> String {
-    String::from("/downloads/")
+fn default_database_name() -> String {
+    String::from("sqlite.db")
 }
 
 fn default_log_level() -> String {
@@ -46,6 +41,7 @@ fn default_ytdlp_path() -> String {
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
+    #[cfg(debug_assertions)]
     let _ = dotenv::dotenv();
 
     let args = match envy::from_env::<Args>() {
@@ -59,8 +55,15 @@ async fn main() -> Result<(), Error> {
         )
         .init();
 
+    // let db_name = if args.database_url.ends_with("/") { &args.database_name } else { &format!("/{}", &args.database_name) };
+
+    // let database_real_path: PathBuf = ["sqlite://", &args.database_url, db_name].iter().collect();
+
+    // println!("{}", database_real_path.to_str().unwrap());
+
+    // let options = SqliteConnectOptions::from_str(&format!("sqlite://{}", &args.database_url))
     let options = SqliteConnectOptions::from_str(&args.database_url)
-        .unwrap()
+    .unwrap()
         .create_if_missing(true);
 
     let db = SqlitePool::connect_with(options)
@@ -70,22 +73,8 @@ async fn main() -> Result<(), Error> {
         .run(&db)
         .await
         .expect("failed to run migrations on db.");
-    create_default_config(&db).await;
 
-    // let cors = CorsLayer::new()
-    //     .allow_methods([Method::GET, Method::POST])
-    //     .allow_origin(
-    //         // args.origins
-    //         //     .split(",")
-    //         //     .map(|origin| {
-    //         //         origin
-    //         //             .parse::<HeaderValue>()
-    //         //             .expect("origin could not be parsed.")
-    //         //     })
-    //         //     .collect::<Vec<_>>(),
-    //         Any
-    //     )
-    //     .allow_headers([HeaderName::from_static("content-type")]);
+    create_default_config(&db).await;
 
     let app = Router::new()
         .nest(
