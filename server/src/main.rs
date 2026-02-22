@@ -62,6 +62,7 @@ async fn main() -> Result<(), Error> {
     // println!("{}", database_real_path.to_str().unwrap());
 
     // let options = SqliteConnectOptions::from_str(&format!("sqlite://{}", &args.database_url))
+    
     let options = SqliteConnectOptions::from_str(&args.database_url)
     .unwrap()
         .create_if_missing(true);

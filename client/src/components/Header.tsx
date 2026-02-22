@@ -12,12 +12,10 @@ const Header: FC = () => {
         switch (theme) {
             case "dark": {
                 setTheme("light");
-                console.log("theme changed to light")
                 break;
             }
             case "light": {
                 setTheme("dark");
-                console.log("theme changed to dark")
                 break;
             }
         }

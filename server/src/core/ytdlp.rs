@@ -247,6 +247,8 @@ impl YtdlpClient {
 
         debug!("downloading from url");
         let mut child = Command::new(&self.ytdlp_path)
+            .arg("--remote-components")
+            .arg("ejs:github")
             .arg("--newline")
             .arg("-f")
             .arg(self.get_format(options))
