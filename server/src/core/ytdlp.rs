@@ -20,8 +20,6 @@ const YTDLP_DOWNLOAD_UPDATE_REGEX: &str = r"\[download\]\s+(\d+(?:\.\d+)?)%\s+of
 
 // <----- Types ----->
 
-// <----- Error & Result ----->
-
 pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug)]
@@ -34,8 +32,6 @@ pub enum Error {
     General { err: std::io::Error },
 }
 
-// <----- YtdlpClient ----->
-
 #[derive(Clone)]
 pub struct YtdlpClient {
     download_path: PathBuf,
@@ -43,18 +39,15 @@ pub struct YtdlpClient {
     pub ytdlp_path: String,
 }
 
-// <----- Download ----->
-
 #[derive(Clone, Serialize, TS)]
 #[ts(export)]
 pub struct Download {
-    options: DownloadOptions,
-    status: Status,
     #[serde(skip)]
     download_termination: Option<Sender<Signal>>,
+    options: DownloadOptions,
+    progress: DownloadProgress,
+    status: Status,
 }
-
-// <----- DownloadOptions ----->
 
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[ts(export)]
@@ -64,23 +57,25 @@ pub struct DownloadOptions {
     quality: String,
 }
 
-// <----- DownloadProgress ----->
-
 #[derive(Debug, Serialize, TS)]
 #[ts(export)]
-pub struct DownloadProgress {
+pub struct DownloadUpdate {
     url: Url,
+    progress: DownloadProgress,
+}
+
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
+pub struct DownloadProgress {
     percent: String,
     size_downloaded: String,
     speed: String,
     eta: String,
 }
 
-// <----- Status ----->
-
 #[derive(Clone, Debug, Deserialize, EnumString, Serialize, sqlx::Type, TS)]
-#[sqlx(type_name = "status")]
 #[ts(export)]
+#[sqlx(type_name = "status")]
 pub enum Status {
     Canceled,
     Completed,
@@ -88,8 +83,6 @@ pub enum Status {
     Paused,
     Running,
 }
-
-// <----- Signal ----->
 
 #[derive(Clone)]
 pub enum Signal {
@@ -99,15 +92,11 @@ pub enum Signal {
 
 // <----- Impl ----->
 
-// <----- Error ----->
-
 impl From<std::io::Error> for Error {
     fn from(err: std::io::Error) -> Self {
         Error::General { err }
     }
 }
-
-// <----- Status ----->
 
 impl std::fmt::Display for Status {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -115,7 +104,16 @@ impl std::fmt::Display for Status {
     }
 }
 
-// <----- YtdlpClient ----->
+impl Default for DownloadProgress {
+    fn default() -> Self {
+        DownloadProgress {
+            percent: String::from("0.0"),
+            size_downloaded: String::from("0.0KiB"),
+            speed: String::from("0.0KiB/s"),
+            eta: String::from("00:00"),
+        }
+    }
+}
 
 impl YtdlpClient {
     pub async fn new(db: SqlitePool, ytdlp_path: String, download_path: PathBuf) -> YtdlpClient {
@@ -139,6 +137,7 @@ impl YtdlpClient {
                         url.clone(),
                         Download {
                             options: options.clone(),
+                            progress: download.progress, // FIX - Shouldn't be set to old progress (probably)
                             status: Status::Running,
                             download_termination: tx,
                         },
@@ -165,6 +164,7 @@ impl YtdlpClient {
                     url.clone(),
                     Download {
                         options: options.clone(),
+                        progress: DownloadProgress::default(),
                         status: Status::Running,
                         download_termination: tx,
                     },
@@ -180,6 +180,7 @@ impl YtdlpClient {
             Some((_, download)) => match download {
                 Download {
                     status: Status::Running,
+                    progress,
                     options,
                     download_termination: Some(tx),
                 } => match tx.send(Signal::Cancel).await {
@@ -188,6 +189,7 @@ impl YtdlpClient {
                             url,
                             Download {
                                 status: Status::Canceled,
+                                progress,
                                 options,
                                 download_termination: None,
                             },
@@ -240,7 +242,7 @@ impl YtdlpClient {
         url: &Url,
         options: &DownloadOptions,
         mut download_kill_rx: Receiver<Signal>,
-        download_update_tx: Option<Sender<DownloadProgress>>,
+        download_update_tx: Option<Sender<DownloadUpdate>>,
     ) -> Result<Status> {
         let mut received_signal = None;
         let download_path = self.download_path.clone().join(&options.name_format);
@@ -294,12 +296,21 @@ impl YtdlpClient {
                     let speed = String::from(&captures[3]);
                     let eta = String::from(&captures[4]);
 
-                    let download_update = DownloadProgress {
-                        url,
+                    let download_progress = DownloadProgress {
                         percent,
                         size_downloaded,
                         speed,
                         eta,
+                    };
+
+                    match self.downloads.get_mut(&url) {
+                        Some(mut download) => download.progress = download_progress.clone(),
+                        None => error!("tried to update download progress, no url for download value found in downloads."),
+                    }
+
+                    let download_update = DownloadUpdate {
+                        url,
+                        progress: download_progress,
                     };
 
                     trace!("download update: {:?}", download_update);

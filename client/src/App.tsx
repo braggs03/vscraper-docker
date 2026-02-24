@@ -1,7 +1,5 @@
 
-import {
-    useQuery,
-} from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { Navigate } from 'react-router';
 import Header from './components/Header';
@@ -12,8 +10,10 @@ import { Label } from "./components/ui/label";
 import { Progress } from './components/ui/progress';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./components/ui/select";
 import "./index.css";
-import type { DownloadEntry } from './types';
 import type { APIResponse } from './types/APIResponse';
+import type { DownloadEntry } from './types/DownloadEntry';
+import type { DownloadOptions } from './types/DownloadOptions';
+import type { DownloadUpdate } from './types/DownloadUpdate';
 
 const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
 
@@ -54,25 +54,35 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
 
             ws.onmessage = (event) => {
                 let response: APIResponse = JSON.parse(event.data);
-                console.dir(response);
                 if (response.type) {
                     switch (response.type) {
                         case "Update":
-                            console.log("got progress update");
+                            const downloadUpdate: DownloadUpdate = JSON.parse(response.data);
+                            console.log(`recieved update: ${JSON.stringify(downloadUpdate)}`);
+
+                            setDownloads(oldDownloads =>
+                                oldDownloads.map(download =>
+                                    download.url === downloadUpdate.url
+                                        ? { ...download, download: { ...download.download, progress: downloadUpdate.progress } }
+                                        : download
+                                )
+                            );
+
                             break;
 
                         case "DownloadsChange":
-                            console.log("got downloads update");
+                            let changedDownloads: DownloadEntry[] = JSON.parse(response.data);
+                            console.log(`recieved downloads change: ${JSON.stringify(changedDownloads)}`);
+
+                            setDownloads(changedDownloads);
+
                             break;
 
                         default:
-                        // Exhaustiveness check
+                            const _: never = response.type;
+                            return _;
                     }
                 }
-            };
-
-            ws.onerror = (error) => {
-                console.error('WebSocket Error:', error);
             };
 
             return () => {
@@ -83,7 +93,7 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
         connect();
     }, []);
 
-    const { isPending, data } = useQuery({
+    const { isPending: configIsPending, data: config } = useQuery({
         queryKey: ['config'],
         queryFn: () =>
             fetch("/api/config").then((res) =>
@@ -93,11 +103,11 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
 
     // <----- Loading ----->
 
-    if (isPending) return 'Loading...'
+    if (configIsPending) return 'Loading...'
 
     // <----- App ----->
 
-    if (!data.skip_homepage && !hasSeenHomepage) {
+    if (!config.skip_homepage && !hasSeenHomepage) {
         return <Navigate to="/starter" />;
     }
 
@@ -105,50 +115,24 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
         setIsDownloading(true);
         setDownloadError(null);
         try {
-            const response = await fetch("/api/download", {
+            const options: DownloadOptions = {
+                container: container,
+                name_format: nameFormat,
+                quality: quality
+            }
+
+            await fetch("/api/download", {
                 method: "POST",
                 body: JSON.stringify({
                     "url": url,
-                    "options": {
-                        "container": container,
-                        "name_format": nameFormat,
-                        "quality": quality
-                    }
+                    options,
                 }),
                 headers: {
                     "Content-Type": "application/json",
                 }
             });
-
-            if (response.ok) {
-                const download: DownloadEntry = {
-                    url,
-                    download: {
-                        options: {
-                            container: container,
-                            name_format: nameFormat,
-                            quality: quality
-                        },
-                        status: "Running"
-                    },
-                    download_progress: {
-                        percent: "0",
-                        size_downloaded: "0",
-                        speed: "0",
-                        eta: "0"
-                    }
-                };
-
-                setDownloads([
-                    ...downloads,
-                    download
-                ]);
-            }
-
-            console.dir(response);
         } catch (error) {
-            console.error('Download failed:', error);
-            setDownloadError('Failed to start download');
+            setDownloadError(`Failed to start download with error: ${error}`);
         } finally {
             setIsDownloading(false);
         }
@@ -329,27 +313,25 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
                 </h2>
                 <div className="mt-4">
                     <div className="space-y-2">
-                        {Array.from(downloads.keys()).map(key => (
-                            <li key={key}>{`${key}: ${downloads[key]}`}</li>
-                        ))}
-                        {Object.entries(downloads).map(([url, download]) => (
+                        {downloads.map(entry => (
                             <div
+                                key={entry.url}
                                 className="flex items-center space-x-2 p-2 border rounded-md"
                             >
                                 <div className="grow">
                                     <div className="flex justify-between">
                                         <span className="text-sm truncate max-w-50">{url}</span>
-                                        <span className="text-sm">{download.download_progress.percent}%</span>
+                                        <span className="text-sm">{entry.download.progress.percent}%</span>
                                     </div>
                                     <div className="w-full bg-gray-200 rounded-full h-2.5 dark:bg-gray-700 mt-1">
                                         <Progress
                                             className="bg-blue-600 h-2.5 rounded-full"
-                                            value={Number(download.download_progress.percent)}
+                                            value={Number(entry.download.progress.percent)}
                                         ></Progress>
                                     </div>
                                     <div className="flex justify-between text-xs text-gray-500 mt-1">
-                                        <span>{download.download_progress.speed}</span>
-                                        <span>ETA: {download.download_progress.eta}</span>
+                                        <span>{entry.download.progress.speed}</span>
+                                        <span>ETA: {entry.download.progress.eta}</span>
                                     </div>
                                 </div>
                                 <div className="flex space-x-2">

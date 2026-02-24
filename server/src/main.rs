@@ -1,9 +1,8 @@
 use axum::Router;
-use regex::Replacer;
 use serde::Deserialize;
 use server::create_default_config;
 use sqlx::{sqlite::SqliteConnectOptions, SqlitePool};
-use std::{io::Error, path::{Path, PathBuf}, str::FromStr};
+use std::{io::Error, str::FromStr};
 use tower_http::services::ServeDir;
 use tracing::Level;
 
@@ -15,18 +14,12 @@ mod error;
 
 #[derive(Deserialize, Debug)]
 struct Args {
-    #[serde(default = "default_database_name")]
-    database_name: String,
     database_url: String,
     download_location: String,
     #[serde(default = "default_log_level")]
     log_level: String,
     #[serde(default = "default_ytdlp_path")]
     ytdlp_path: String,
-}
-
-fn default_database_name() -> String {
-    String::from("sqlite.db")
 }
 
 fn default_log_level() -> String {
@@ -54,14 +47,6 @@ async fn main() -> Result<(), Error> {
             Level::from_str(&args.log_level).expect("couldn't convert log_level to known level"),
         )
         .init();
-
-    // let db_name = if args.database_url.ends_with("/") { &args.database_name } else { &format!("/{}", &args.database_name) };
-
-    // let database_real_path: PathBuf = ["sqlite://", &args.database_url, db_name].iter().collect();
-
-    // println!("{}", database_real_path.to_str().unwrap());
-
-    // let options = SqliteConnectOptions::from_str(&format!("sqlite://{}", &args.database_url))
     
     let options = SqliteConnectOptions::from_str(&args.database_url)
     .unwrap()

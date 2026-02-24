@@ -15,7 +15,7 @@ use tracing::{debug, error, info};
 use ts_rs::TS;
 use url::Url;
 
-use crate::core::ytdlp::{self, DownloadOptions, Status, YtdlpClient};
+use crate::core::ytdlp::{self, Download, DownloadOptions, Status, YtdlpClient};
 
 // <----- Types ----->
 
@@ -27,9 +27,7 @@ struct AppState {
     /// The yt-dlp client used for download related functions.
     ytdlp_client: YtdlpClient,
     /// Communicate downloads change to frontend.
-    downloads_change_tx: Sender<String>,
-    /// Communicate download updates to frontend.
-    download_update_tx: Sender<String>,
+    frontend_ws_tx: Sender<String>,
 }
 
 // <----- APIResponseType ----->
@@ -37,7 +35,7 @@ struct AppState {
 #[derive(Serialize, TS)]
 #[ts(export)]
 struct APIResponse {
-    #[serde(rename="type")]
+    #[serde(rename = "type")]
     kind: APIResponseType,
     data: String,
 }
@@ -51,7 +49,12 @@ enum APIResponseType {
     Update,
 }
 
-// <----- DownloadRequest ----->
+#[derive(Serialize, TS)]
+#[ts(export)]
+struct DownloadEntry {
+    url: Url,
+    download: Download,
+}
 
 #[derive(Deserialize)]
 struct DownloadRequest {
@@ -60,8 +63,6 @@ struct DownloadRequest {
 }
 
 // <----- Impl ----->
-
-// <----- AppState ----->
 
 impl FromRef<AppState> for YtdlpClient {
     fn from_ref(app_state: &AppState) -> YtdlpClient {
@@ -72,8 +73,7 @@ impl FromRef<AppState> for YtdlpClient {
 // <----- Routes ----->
 
 pub async fn routes(db: SqlitePool, ytdlp_path: String, download_path: PathBuf) -> Router {
-    let (download_update_tx, _) = broadcast::channel::<String>(100); // TODO - Fix 100 - Don't know.
-    let (downloads_change_tx, _) = broadcast::channel::<String>(100); // TODO - Fix 100 - Don't know.
+    let (frontend_ws_tx, _) = broadcast::channel::<String>(100); // TODO - Fix 100 - Don't know.
     let ytdlp_client = YtdlpClient::new(db, ytdlp_path, download_path).await;
 
     Router::new()
@@ -82,14 +82,11 @@ pub async fn routes(db: SqlitePool, ytdlp_path: String, download_path: PathBuf) 
         // .route("/pause", post(pause_download))
         .route("/urls", get(get_urls))
         .with_state(AppState {
-            downloads_change_tx: downloads_change_tx.clone(),
-            download_update_tx: download_update_tx.clone(),
+            frontend_ws_tx: frontend_ws_tx.clone(),
             ytdlp_client,
         })
         .route("/ws", any(download_update_websocket))
-        .with_state(download_update_tx)
-        .route("/ws_downloads_update", any(downloads_change_websocket))
-        .with_state(downloads_change_tx)
+        .with_state(frontend_ws_tx)
 }
 
 // <----- Functions ----->
@@ -167,12 +164,7 @@ async fn download_from_options(
         .await
     {
         Ok(_) => {
-            let _ = app_state.downloads_change_tx.send(
-                json!({
-                    "downloads": [app_state.ytdlp_client.get_downloads()]
-                })
-                .to_string(),
-            );
+            let _ = notify_downloads_change(&app_state.ytdlp_client, &app_state.frontend_ws_tx);
         }
         Err(err) => {
             return match err {
@@ -194,7 +186,7 @@ async fn download_from_options(
         let url = download.url.clone();
         async move {
             while let Some(progress_update) = download_update_rx.recv().await {
-                let _ = app_state.download_update_tx.send(
+                let _ = app_state.frontend_ws_tx.send(
                     serde_json::to_string(&APIResponse {
                         kind: APIResponseType::Update,
                         data: serde_json::to_string(&progress_update).unwrap(),
@@ -224,7 +216,7 @@ async fn download_from_options(
                 .await
             {
                 Ok(status) => {
-                    let _ = app_state.download_update_tx.send(
+                    let _ = app_state.frontend_ws_tx.send(
                         json!({
                             "type": "download_status",
                             "data": status
@@ -308,6 +300,23 @@ async fn handle_download_update_websocket(socket: WebSocket, tx: Sender<String>)
             return;
         }
     }
+}
+
+fn notify_downloads_change(ytdlp_client: &YtdlpClient, sender: &Sender<String>) {
+    let downloads = ytdlp_client.get_downloads();
+
+    let downloads_as_vec: Vec<DownloadEntry> = downloads
+        .into_iter()
+        .map(|(url, download)| DownloadEntry { url, download })
+        .collect();
+
+    let _ = sender.send(
+        json!(&APIResponse {
+            kind: APIResponseType::DownloadsChange,
+            data: serde_json::json!(downloads_as_vec).to_string()
+        })
+        .to_string(),
+    );
 }
 
 // async fn pause_download(

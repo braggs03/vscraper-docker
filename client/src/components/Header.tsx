@@ -1,6 +1,6 @@
-import type { FC } from "react";
 import { Button } from "@/components/ui/button";
-import { Moon, Sun } from "lucide-react"
+import { Moon, Sun } from "lucide-react";
+import type { FC } from "react";
 import { useNavigate } from "react-router";
 import { useTheme } from "./theme-provider";
 
