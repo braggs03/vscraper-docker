@@ -1,0 +1,2 @@
+cd server
+TS_RS_EXPORT_DIR=../client/src/types/ cargo test export_bindings
