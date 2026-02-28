@@ -1,0 +1,18 @@
+meta {
+  name: Pause Download
+  type: http
+  seq: 1
+}
+
+post {
+  url: http://localhost:3000/api/download/modify
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "url":"https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=RDdQw4w9WgXcQ&start_radio=1",
+    "signal":"Pause"
+  }
+}

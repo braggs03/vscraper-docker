@@ -1,0 +1,22 @@
+meta {
+  name: Start Download
+  type: http
+  seq: 1
+}
+
+post {
+  url: http://localhost:3000/api/download
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "url":"https://www.pornhub.com/view_video.php?viewkey=695029cb8c410",
+    "options": {
+      "container":"mp4",
+      "name_format":"%(title)s.%(ext)s",
+      "quality":"1080"
+    }
+  }
+}
