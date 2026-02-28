@@ -12,7 +12,7 @@ function Root() {
     const [hasSeenHomepage, setHasSeenHomepage] = useState(false);
     return (
         <QueryClientProvider client={queryClient}>
-            <ThemeProvider defaultTheme="light" storageKey="vite-ui-theme">
+            <ThemeProvider>
                 <BrowserRouter>
                     <Routes>
                         <Route path="/" element={<App hasSeenHomepage={hasSeenHomepage} />} />
