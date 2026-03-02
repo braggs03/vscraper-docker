@@ -36,6 +36,10 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
     });
 
     useEffect(() => {
+        fetch("/api/download/existing")
+            .then(res => res.json())
+            .then(setDownloads);
+
         const connect = () => {
             let ws = new WebSocket("/api/download/ws");
 
@@ -44,58 +48,58 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
                 setTimeout(connect, 3000);
             };
 
-            ws.onerror = () => {
-                ws.close();
-            };
-
-            ws.onopen = () => {
-                console.log("opened download ws");
-            }
-
+            
             ws.onmessage = (event) => {
                 let response: APIResponse = JSON.parse(event.data);
                 if (response.type) {
                     switch (response.type) {
                         case "Update":
                             const downloadUpdate: DownloadUpdate = JSON.parse(response.data);
-                            console.log(`recieved update: ${JSON.stringify(downloadUpdate)}`);
-
+                            console.log(`received update: ${JSON.stringify(downloadUpdate)}`);
+                            
                             setDownloads(oldDownloads =>
                                 oldDownloads.map(download =>
                                     download.url === downloadUpdate.url
-                                        ? { ...download, download: { ...download.download, progress: downloadUpdate.progress } }
-                                        : download
+                                    ? { ...download, download: { ...download.download, progress: downloadUpdate.progress } }
+                                    : download
                                 )
                             );
-
+                            
                             break;
-
-                        case "DownloadsChange":
-                            let changedDownloads: DownloadEntry[] = JSON.parse(response.data);
-                            console.log(`recieved downloads change: ${JSON.stringify(changedDownloads)}`);
-
-                            setDownloads(changedDownloads);
-
-                            break;
-
-                        default:
-                            const _: never = response.type;
-                            return _;
+                            
+                            case "DownloadsChange": // TODO - BACKEND WILL (EVENTUALLY) SEND ONLY UPDATED DOWNLOADS
+                                let changedDownloads: DownloadEntry[] = JSON.parse(response.data);
+                                console.log(`received downloads change: ${JSON.stringify(changedDownloads)}`);
+                                
+                                setDownloads(changedDownloads);
+                                
+                                break;
+                                
+                                default:
+                                    const _: never = response.type;
+                                    return _;
+                                }
+                            }
+                        };
+                        
+                        ws.onerror = () => {
+                            ws.close();
+                        };
+                
+                        ws.onopen = () => {
+                            console.log("successfully opened websocket");
+                        }
+                        
+                        return () => {
+                            ws.close();
+                        };
                     }
-                }
-            };
-
-            return () => {
-                ws.close();
-            };
-        }
-
-        connect();
-    }, []);
-
-    const { isPending: configIsPending, data: config } = useQuery({
-        queryKey: ['config'],
-        queryFn: () =>
+                    connect();
+                }, []);
+                
+                const { isPending: configIsPending, data: config } = useQuery({
+                    queryKey: ['config'],
+                    queryFn: () =>
             fetch("/api/config").then((res) =>
                 res.json(),
             ),
@@ -311,7 +315,7 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
                         Downloading
                     </p>
                 </h2>
-                <div className="mt-4">
+                <div className="mt-4 max-w-5xl w-full">
                     <div className="space-y-2">
                         {downloads.map(entry => (
                             <div
@@ -320,12 +324,12 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
                             >
                                 <div className="grow">
                                     <div className="flex justify-between">
-                                        <span className="text-sm truncate max-w-50">{url}</span>
+                                        <span className="text-sm min-w-0 truncate">{entry.download.title}</span>
                                         <span className="text-sm">{entry.download.progress.percent}%</span>
                                     </div>
                                     <div className="w-full bg-gray-200 rounded-full h-2.5 dark:bg-gray-700 mt-1">
                                         <Progress
-                                            className="bg-blue-600 h-2.5 rounded-full"
+                                            className="bg-blue-600 h-2.5 rounded-full shrink-0"
                                             value={Number(entry.download.progress.percent)}
                                         ></Progress>
                                     </div>
@@ -339,8 +343,6 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
                                         variant="ghost"
                                         size="icon"
                                     >
-                                    </Button>
-                                    <Button variant="ghost" size="icon">
                                     </Button>
                                 </div>
                             </div>
