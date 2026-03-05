@@ -8,8 +8,7 @@ use std::sync::Arc;
 use strum_macros::EnumString;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
-use tokio::sync::mpsc::Receiver;
-use tokio::sync::mpsc::{error::TryRecvError, Sender};
+use tokio::sync::mpsc::{error::TryRecvError, Receiver, Sender};
 use tracing::{debug, error, info, trace};
 use ts_rs::TS;
 use url::Url;
@@ -47,6 +46,7 @@ pub struct Download {
     options: DownloadOptions,
     progress: DownloadProgress,
     status: Status,
+    title: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
@@ -73,7 +73,7 @@ pub struct DownloadProgress {
     eta: String,
 }
 
-#[derive(Clone, Debug, Deserialize, EnumString, Serialize, sqlx::Type, TS)]
+#[derive(Clone, Debug, Deserialize, EnumString, Serialize, sqlx::Type, PartialEq, TS)]
 #[ts(export)]
 #[sqlx(type_name = "status")]
 pub enum Status {
@@ -84,7 +84,7 @@ pub enum Status {
     Running,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Deserialize, PartialEq)]
 pub enum Signal {
     Cancel,
     Pause,
@@ -95,6 +95,15 @@ pub enum Signal {
 impl From<std::io::Error> for Error {
     fn from(err: std::io::Error) -> Self {
         Error::General { err }
+    }
+}
+
+impl From<&Signal> for Status {
+    fn from(value: &Signal) -> Self {
+        match value {
+            Signal::Cancel => Status::Canceled,
+            Signal::Pause => Status::Paused,
+        }
     }
 }
 
@@ -136,10 +145,11 @@ impl YtdlpClient {
                     self.downloads.insert(
                         url.clone(),
                         Download {
+                            download_termination: tx,
                             options: options.clone(),
                             progress: download.progress, // FIX - Shouldn't be set to old progress (probably)
                             status: Status::Running,
-                            download_termination: tx,
+                            title: download.title,
                         },
                     );
 
@@ -167,6 +177,7 @@ impl YtdlpClient {
                         progress: DownloadProgress::default(),
                         status: Status::Running,
                         download_termination: tx,
+                        title: self.get_title(&url).await?,
                     },
                 );
 
@@ -175,38 +186,6 @@ impl YtdlpClient {
         }
     }
 
-    pub async fn cancel_download(&self, url: Url) -> Result<Status> {
-        match self.downloads.remove(&url) {
-            Some((_, download)) => match download {
-                Download {
-                    status: Status::Running,
-                    progress,
-                    options,
-                    download_termination: Some(tx),
-                } => match tx.send(Signal::Cancel).await {
-                    Ok(_) => {
-                        self.downloads.insert(
-                            url,
-                            Download {
-                                status: Status::Canceled,
-                                progress,
-                                options,
-                                download_termination: None,
-                            },
-                        );
-                        Ok(Status::Canceled)
-                    }
-                    Err(_) => Err(Error::FailedToHalt),
-                },
-                _ => Err(Error::NotDownloading),
-            },
-            None => Err(Error::NotDownloading),
-        }
-    }
-
-    /// Checks if yt-dlp is able to download the video(s) of the url with the given options.
-    /// # Errors
-    /// Possible error variants are: FailedCheck, General
     pub async fn check_url_availability(&self, url: &Url, options: &DownloadOptions) -> Result<()> {
         debug!(
             "running check for url: {}, with options: {:?}",
@@ -214,6 +193,8 @@ impl YtdlpClient {
         );
 
         let mut child = Command::new(&self.ytdlp_path)
+            .arg("--remote-components")
+            .arg("ejs:github")
             .arg("--simulate")
             .arg("-o")
             .arg(&options.name_format)
@@ -227,7 +208,7 @@ impl YtdlpClient {
         let stderr = child.stderr.take().unwrap();
         let mut reader = BufReader::new(stderr).lines();
         while let Ok(Some(line)) = reader.next_line().await {
-            trace!("ytdlp check error: {}", line);
+            debug!("ytdlp check error: {}", line);
         }
 
         if child.wait().await?.success() {
@@ -256,8 +237,8 @@ impl YtdlpClient {
             .arg(self.get_format(options))
             .arg("--merge-output-format")
             .arg(&options.container)
-            // .arg("--rate-limit")
-            // .arg("100K")
+            .arg("--rate-limit")
+            .arg("100K")
             .arg("-o")
             .arg(download_path)
             .arg(url.as_str())
@@ -334,55 +315,6 @@ impl YtdlpClient {
         }
     }
 
-    // async fn add_download_handler(
-    //     &self,
-    //     url: &Url,
-    //     options: &DownloadOptions,
-    //     tx: Sender<Signal>,
-    // ) -> Result<()> {
-    //     if self.downloads.lock().await.contains_key(url) {
-    //         return Err(Error::DownloadAlreadyPresent);
-    //     }
-
-    //     self.downloads
-    //         .lock()
-    //         .await
-    //         .insert(url.clone(), (Status::Running, options.clone(), Some(tx)));
-
-    //     match self.insert_download_db(url, Status::Running, options).await {
-    //         Ok(_) => info!("download with url successfully added to database: {}", url),
-    //         Err(err) => return Err(err),
-    //     }
-
-    //     Ok(())
-    // }
-
-    // async fn get_filename(&self, url: &Url, options: &DownloadOptions) -> Option<String> {
-    //     let child = Command::new(&self.ytdlp_path)
-    //         .arg("-o")
-    //         .arg(&options.name_format)
-    //         .arg("--get-filename")
-    //         .arg(url.as_str())
-    //         .stderr(Stdio::null())
-    //         .stdout(Stdio::piped())
-    //         .output()
-    //         .await;
-
-    //     // TODO - This should probably be fixed
-    //     if let Ok(output) = child {
-    //         if output.status.success() {
-    //             let mut last_line = String::new();
-    //             let mut lines = output.stdout.lines();
-    //             while let Ok(Some(line)) = lines.next_line().await {
-    //                 last_line = line;
-    //             }
-    //             return Some(last_line);
-    //         }
-    //     };
-
-    //     None
-    // }
-
     pub fn get_downloads(&self) -> DashMap<Url, Download> {
         (*self.downloads).clone()
     }
@@ -397,6 +329,25 @@ impl YtdlpClient {
             .iter()
             .map(|entry| entry.key().clone())
             .collect())
+    }
+
+    async fn get_title(&self, url: &Url) -> Result<String> {
+        let output = Command::new(&self.ytdlp_path)
+            .arg("--simulate")
+            .arg("--get-title")
+            .arg(url.as_str())
+            .stderr(Stdio::null())
+            .stdout(Stdio::piped())
+            .output()
+            .await?;
+
+        let mut stdio_lines = output.stdout.lines();
+        let mut last_line = String::from("unknown");
+        while let Ok(Some(line)) = stdio_lines.next_line().await {
+            last_line = line;
+        }
+
+        Ok(last_line)
     }
 
     async fn handle_kill_download(
@@ -420,6 +371,11 @@ impl YtdlpClient {
                                     "killed zombie child for url: {}, pid: {}, exit code: {}",
                                     url, pid, exit_status
                                 );
+
+                                if signal == Signal::Cancel {
+                                    debug!("signal cancel received, removing partially downloaded files. NOT YET IMPLEMENTED");
+                                    // TODO - FIX THIS
+                                }
                             }
                             Err(err) => {
                                 error!(
@@ -434,7 +390,6 @@ impl YtdlpClient {
                         url, pid, err
                     ),
                 }
-
                 Some(signal)
             }
             Err(TryRecvError::Disconnected) => None, //TODO - What should this do? Kill download? Unreachable?
@@ -442,55 +397,46 @@ impl YtdlpClient {
         }
     }
 
-    // pub async fn pause_download(&self, url: Url) -> Result<Status> {
-    //     match self.downloads.remove(&url) {
-    //         Some((_, download)) => match download {
-    //             Download {
-    //                 status: Status::Running,
-    //                 options,
-    //                 download_termination: Some(tx),
-    //             } => match tx.send(Signal::Pause).await {
-    //                 Ok(_) => {
-    //                     self.downloads.insert(
-    //                         url,
-    //                         Download {
-    //                             status: Status::Paused,
-    //                             options,
-    //                             download_termination: None,
-    //                         },
-    //                     );
-    //                     Ok(Status::Paused)
-    //                 }
-    //                 Err(_) => Err(Error::FailedToHalt),
-    //             },
-    //             _ => Err(Error::NotDownloading),
-    //         },
-    //         None => Err(Error::NotDownloading),
-    //     }
-    // }
+    pub async fn modify_download(&self, url: &Url, status: Status) {
+        match status {
+            Status::Canceled => todo!(),
+            Status::Completed => todo!(),
+            Status::Failed => todo!(),
+            Status::Paused => todo!(),
+            Status::Running => todo!(),
+        }
+    }
 
-    // pub async fn modify_download(
-    //     &self,
-    //     url: &Url,
-    //     options: &DownloadOptions,
-    //     tx: Option<Sender<Signal>>,
-    // ) -> Result<()> {
-    //     match self.downloads.contains_key(&url) {
-    //         true => Err(Error::DownloadAlreadyPresent { status: todo!() }),
-    //         false => {
-    //             self.downloads.insert(
-    //                 url.clone(),
-    //                 Download {
-    //                     options: options.clone(),
-    //                     status: Status::Running,
-    //                     download_termination: tx,
-    //                 },
-    //             );
-
-    //             Ok(())
-    //         }
-    //     }
-    // }
+    pub async fn interrupt_download(&self, url: &Url, signal: &Signal) -> Result<Status> {
+        match self.downloads.remove(&url) {
+            Some((url, download)) => match download {
+                Download {
+                    download_termination: Some(tx),
+                    options,
+                    progress,
+                    status: Status::Running,
+                    title,
+                } => match tx.send(signal.clone()).await {
+                    Ok(_) => {
+                        self.downloads.insert(
+                            url,
+                            Download {
+                                download_termination: None,
+                                options,
+                                progress,
+                                status: Status::from(signal),
+                                title,
+                            },
+                        );
+                        Ok(Status::Paused)
+                    }
+                    Err(_) => Err(Error::FailedToHalt),
+                },
+                _ => Err(Error::NotDownloading), // TODO - FIX THIS - SHOULD BE A DIFFERENT
+            },
+            None => Err(Error::NotDownloading),
+        }
+    }
 
     pub async fn get_all_playlist_urls(&self, url: &Url) -> Result<Vec<Url>> {
         let output = Command::new(&self.ytdlp_path)

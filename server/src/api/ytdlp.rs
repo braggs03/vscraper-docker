@@ -11,11 +11,11 @@ use sqlx::SqlitePool;
 use std::path::PathBuf;
 use tokio::sync::broadcast::Sender;
 use tokio::sync::{broadcast, mpsc};
-use tracing::{debug, error, info};
+use tracing::{debug, error};
 use ts_rs::TS;
 use url::Url;
 
-use crate::core::ytdlp::{self, Download, DownloadOptions, Status, YtdlpClient};
+use crate::core::ytdlp::{self, Download, DownloadOptions, Signal, Status, YtdlpClient};
 
 // <----- Types ----->
 
@@ -78,7 +78,8 @@ pub async fn routes(db: SqlitePool, ytdlp_path: String, download_path: PathBuf) 
 
     Router::new()
         .route("/", post(download_from_options))
-        .route("/cancel", post(cancel_download))
+        .route("/existing", get(get_downloads))
+        .route("/modify", post(interrupt_download))
         // .route("/pause", post(pause_download))
         .route("/urls", get(get_urls))
         .with_state(AppState {
@@ -91,43 +92,15 @@ pub async fn routes(db: SqlitePool, ytdlp_path: String, download_path: PathBuf) 
 
 // <----- Functions ----->
 
-async fn cancel_download(
-    State(ytdlp_client): State<YtdlpClient>,
-    Json(url): Json<Url>,
-) -> StatusCode {
-    info!("canceling download for url: {}", url);
-    match ytdlp_client.cancel_download(url.clone()).await {
-        Ok(status) => match status {
-            Status::Canceled => StatusCode::OK,
-            _ => StatusCode::INTERNAL_SERVER_ERROR,
-        },
-        Err(err) => {
-            error!("failed to cancel download for url: {}, err: {:?}", url, err);
-            StatusCode::BAD_REQUEST
-        }
-    }
-}
+async fn get_downloads(State(ytdlp_client): State<YtdlpClient>) -> Result<String, StatusCode> {
+    let downloads_as_vec: Vec<DownloadEntry> = ytdlp_client
+        .get_downloads()
+        .into_iter()
+        .map(|(url, download)| DownloadEntry { url, download })
+        .collect();
 
-// async fn check_url_availability(
-//     State(ytdlp_client): State<YtdlpClient>,
-//     Json(download): Json<DownloadRequest>,
-// ) -> Result<StatusCode, (StatusCode, String)> {
-//     match ytdlp_client
-//         .check_url_availability(&download.url, &download.options)
-//         .await
-//     {
-//         Ok(_) => Ok(StatusCode::OK),
-//         Err(err) => match err {
-//             ytdlp::Error::General { err } => {
-//                 Err((StatusCode::INTERNAL_SERVER_ERROR, err.kind().to_string()))
-//             }
-//             _ => {
-//                 error!("check failed: {:?}", err);
-//                 Err((StatusCode::BAD_REQUEST, String::from("Bad download")))
-//             }
-//         },
-//     }
-// }
+    Ok(serde_json::json!(downloads_as_vec).to_string())
+}
 
 async fn download_from_options(
     State(app_state): State<AppState>,
@@ -242,13 +215,6 @@ async fn download_update_websocket(
     ws.on_upgrade(move |socket| handle_download_update_websocket(socket, tx))
 }
 
-async fn downloads_change_websocket(
-    ws: WebSocketUpgrade,
-    State(tx): State<broadcast::Sender<String>>,
-) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_downloads_change_websocket(socket, tx))
-}
-
 async fn get_urls(State(ytdlp_client): State<YtdlpClient>) -> Result<String, StatusCode> {
     match ytdlp_client.get_present_urls().await {
         Ok(urls) => match serde_json::to_string(&urls) {
@@ -256,22 +222,6 @@ async fn get_urls(State(ytdlp_client): State<YtdlpClient>) -> Result<String, Sta
             Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
         },
         Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
-    }
-}
-
-async fn handle_downloads_change_websocket(socket: WebSocket, tx: broadcast::Sender<String>) {
-    let mut rx = tx.subscribe();
-
-    let (mut ws_tx, mut _ws_rx) = socket.split();
-
-    while let Ok(message) = rx.recv().await {
-        if let Err(e) = ws_tx
-            .send(axum::extract::ws::Message::Text(message.into()))
-            .await
-        {
-            error!("sending message to client, client disconnected: {}", e);
-            return;
-        }
     }
 }
 
@@ -302,6 +252,7 @@ async fn handle_download_update_websocket(socket: WebSocket, tx: Sender<String>)
     }
 }
 
+// TODO - FIX THIS - SHOULD ONLY RETURN UPDATED DOWNLOAD
 fn notify_downloads_change(ytdlp_client: &YtdlpClient, sender: &Sender<String>) {
     let downloads = ytdlp_client.get_downloads();
 
@@ -319,15 +270,24 @@ fn notify_downloads_change(ytdlp_client: &YtdlpClient, sender: &Sender<String>) 
     );
 }
 
-// async fn pause_download(
-//     State(ytdlp_client): State<YtdlpClient>,
-//     Json(url): Json<Url>,
-// ) -> StatusCode {
-//     match ytdlp_client.pause_download(url).await {
-//         Ok(status) => match status {
-//             Status::Paused => StatusCode::OK,
-//             _ => StatusCode::INTERNAL_SERVER_ERROR,
-//         },
-//         Err(_) => StatusCode::BAD_REQUEST,
-//     }
-// }
+#[derive(Deserialize)]
+struct ModifyRequest {
+    url: Url,
+    signal: Signal,
+}
+
+async fn interrupt_download(
+    State(ytdlp_client): State<YtdlpClient>,
+    Json(modify): Json<ModifyRequest>,
+) -> StatusCode {
+    match ytdlp_client
+        .interrupt_download(&modify.url, &modify.signal)
+        .await
+    {
+        Ok(status) => match status.eq(&Status::from(&modify.signal)) {
+            true => StatusCode::OK,
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
+        },
+        Err(_) => StatusCode::BAD_REQUEST,
+    }
+}
