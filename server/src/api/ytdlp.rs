@@ -180,7 +180,7 @@ async fn download_from_options(
         async move {
             match app_state
                 .ytdlp_client
-                .download_from_options(
+                .download(
                     &download.url,
                     &download.options,
                     download_kill_rx,
@@ -198,7 +198,6 @@ async fn download_from_options(
                     );
                 }
                 Err(err) => match err {
-                    ytdlp::Error::FailedToComplete => todo!(),
                     unhandled_err => todo!("handle error: {:?}", unhandled_err),
                 },
             }

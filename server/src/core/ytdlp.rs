@@ -25,7 +25,6 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub enum Error {
     DownloadAlreadyPresent { status: Status },
     FailedCheck,
-    FailedToComplete,
     FailedToHalt,
     NotDownloading,
     General { err: std::io::Error },
@@ -218,7 +217,7 @@ impl YtdlpClient {
         }
     }
 
-    pub async fn download_from_options(
+    pub async fn download(
         &self,
         url: &Url,
         options: &DownloadOptions,
@@ -310,7 +309,7 @@ impl YtdlpClient {
                     Signal::Cancel => Ok(Status::Canceled),
                     Signal::Pause => Ok(Status::Paused),
                 },
-                None => Err(Error::FailedToComplete),
+                None => Ok(Status::Failed),
             },
         }
     }
@@ -397,16 +396,6 @@ impl YtdlpClient {
         }
     }
 
-    pub async fn modify_download(&self, url: &Url, status: Status) {
-        match status {
-            Status::Canceled => todo!(),
-            Status::Completed => todo!(),
-            Status::Failed => todo!(),
-            Status::Paused => todo!(),
-            Status::Running => todo!(),
-        }
-    }
-
     pub async fn interrupt_download(&self, url: &Url, signal: &Signal) -> Result<Status> {
         match self.downloads.remove(&url) {
             Some((url, download)) => match download {
@@ -438,7 +427,8 @@ impl YtdlpClient {
         }
     }
 
-    pub async fn get_all_playlist_urls(&self, url: &Url) -> Result<Vec<Url>> {
+    /// Used to grab all urls - i.e. the requested link is a playlist.
+    pub async fn get_all_urls(&self, url: &Url) -> Result<Vec<Url>> {
         let output = Command::new(&self.ytdlp_path)
             .arg("--flat-playlist")
             .arg("--print")
@@ -532,7 +522,7 @@ impl YtdlpClient {
 
 // <----- Functions ----->
 
-async fn init_from_db(db: SqlitePool) -> Arc<DashMap<Url, Download>> {
+async fn init_from_db(_db: SqlitePool) -> Arc<DashMap<Url, Download>> {
     // let rows = sqlx::query!("SELECT * FROM Download").fetch_all(&db).await;
     // let downloads = match rows {
     //     Ok(rows) => {
