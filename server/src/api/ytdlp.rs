@@ -160,11 +160,11 @@ async fn download_from_options(
         async move {
             while let Some(progress_update) = download_update_rx.recv().await {
                 let _ = app_state.frontend_ws_tx.send(
-                    serde_json::to_string(&APIResponse {
+                    serde_json::json!(&APIResponse {
                         kind: APIResponseType::Update,
-                        data: serde_json::to_string(&progress_update).unwrap(),
+                        data: serde_json::json!(&progress_update).to_string(),
                     })
-                    .unwrap(),
+                    .to_string(),
                 );
                 // Err doesn't matter - failure means client disconnected - continue sending for if client reconnects.
                 // if let Err(err) = app_state.tx.lock().await.send(string) {
@@ -189,13 +189,21 @@ async fn download_from_options(
                 .await
             {
                 Ok(status) => {
-                    let _ = app_state.frontend_ws_tx.send(
-                        json!({
-                            "type": "download_status",
-                            "data": status
-                        })
-                        .to_string(),
-                    );
+                    match app_state
+                        .ytdlp_client
+                        .modify_download(&download.url, status)
+                        .await
+                    {
+                        Ok(_) => todo!(),
+                        Err(_) => todo!(),
+                    }
+                    // let _ = app_state.frontend_ws_tx.send(
+                    //     json!({
+                    //         "type": "download_status",
+                    //         "data": status
+                    //     })
+                    //     .to_string(),
+                    // );
                 }
                 Err(err) => match err {
                     unhandled_err => todo!("handle error: {:?}", unhandled_err),
