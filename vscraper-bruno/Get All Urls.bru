@@ -1,0 +1,15 @@
+meta {
+  name: Get All Urls
+  type: http
+  seq: 5
+}
+
+get {
+  url: http://localhost:3000/api/download/get_playlist_urls
+  body: none
+  auth: inherit
+}
+
+settings {
+  encodeUrl: true
+}
