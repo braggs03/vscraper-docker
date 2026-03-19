@@ -7,6 +7,7 @@ use axum::{
 use serde::Serialize;
 use serde_json::Value;
 use sqlx::SqlitePool;
+use tracing::error;
 use ts_rs::TS;
 
 #[derive(Clone, Debug, Serialize, TS)]
@@ -51,6 +52,9 @@ async fn set_skip_homepage(
             1 => Ok(StatusCode::OK),
             _ => Err(StatusCode::INTERNAL_SERVER_ERROR),
         },
-        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+        Err(err) => {
+            error!("failed to set skip_homepage: {err}");
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        },
     }
 }
