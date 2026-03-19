@@ -315,7 +315,12 @@ impl YtdlpClient {
         }
     }
 
-    fn ytdlp_command(&self, url: &Url, options: Option<DownloadOptions>, args: Vec<&str>) -> Command {
+    fn ytdlp_command(
+        &self,
+        url: &Url,
+        options: Option<DownloadOptions>,
+        args: Vec<&str>,
+    ) -> Command {
         let mut built_command = Command::new(&self.ytdlp_path);
 
         let url_as_str = url.as_str();
@@ -355,7 +360,11 @@ impl YtdlpClient {
 
     async fn get_title(&self, url: &Url, options: &DownloadOptions) -> Result<String> {
         let output = self
-            .ytdlp_command(url, Some(options.clone()), vec!["--simulate", "--get-title"])
+            .ytdlp_command(
+                url,
+                Some(options.clone()),
+                vec!["--simulate", "--get-title"],
+            )
             .stderr(Stdio::null())
             .stdout(Stdio::piped())
             .output()
