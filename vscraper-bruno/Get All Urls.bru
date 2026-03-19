@@ -6,10 +6,15 @@ meta {
 
 get {
   url: http://localhost:3000/api/download/get_playlist_urls
-  body: none
+  body: json
   auth: inherit
+}
+
+body:json {
+  "https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=RDdQw4w9WgXcQ&start_radio=1"
 }
 
 settings {
   encodeUrl: true
+  timeout: 0
 }
