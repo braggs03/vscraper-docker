@@ -26,7 +26,7 @@ pub enum Error {
     DownloadAlreadyPresent { status: Status },
     FailedCheck,
     FailedToHalt,
-    NotDownloading,
+    NotPresent,
     General { err: std::io::Error },
 }
 
@@ -123,6 +123,16 @@ impl Default for DownloadProgress {
     }
 }
 
+impl Default for DownloadOptions {
+    fn default() -> Self {
+        DownloadOptions {
+            container: String::from("mp4"),
+            name_format: String::from("%(title)s.%(ext)s"),
+            quality: String::from("1080"),
+        }
+    }
+}
+
 impl YtdlpClient {
     pub async fn new(db: SqlitePool, ytdlp_path: String, download_path: PathBuf) -> YtdlpClient {
         YtdlpClient {
@@ -176,7 +186,7 @@ impl YtdlpClient {
                         progress: DownloadProgress::default(),
                         status: Status::Running,
                         download_termination: tx,
-                        title: self.get_title(&url).await?,
+                        title: self.get_title(&url, &options).await?,
                     },
                 );
 
@@ -191,20 +201,14 @@ impl YtdlpClient {
             url, options
         );
 
-        let mut child = Command::new(&self.ytdlp_path)
-            .arg("--remote-components")
-            .arg("ejs:github")
-            .arg("--simulate")
-            .arg("-o")
-            .arg(&options.name_format)
-            .arg("-f")
-            .arg(self.get_format(&options))
-            .arg(url.as_str())
+        let mut child = self
+            .ytdlp_command(url, Some(options.clone()), vec!["--simulate"])
             .stderr(Stdio::piped())
-            .stdout(Stdio::null())
+            .stdout(Stdio::piped())
             .spawn()?;
 
         let stderr = child.stderr.take().unwrap();
+
         let mut reader = BufReader::new(stderr).lines();
         while let Ok(Some(line)) = reader.next_line().await {
             debug!("ytdlp check error: {}", line);
@@ -225,23 +229,20 @@ impl YtdlpClient {
         download_update_tx: Option<Sender<DownloadUpdate>>,
     ) -> Result<Status> {
         let mut received_signal = None;
-        let download_path = self.download_path.clone().join(&options.name_format);
 
         debug!("downloading from url");
-        let mut child = Command::new(&self.ytdlp_path)
-            .arg("--remote-components")
-            .arg("ejs:github")
-            .arg("--newline")
-            .arg("-f")
-            .arg(self.get_format(options))
-            .arg("--merge-output-format")
-            .arg(&options.container)
-            .arg("--rate-limit")
-            .arg("100K")
-            .arg("-o")
-            .arg(download_path)
-            .arg(url.as_str())
-            .stderr(Stdio::inherit())
+
+        let args: Vec<&str> = vec![
+            "--newline",
+            "--rate-limit",
+            "100k",
+            "--merge-output-format",
+            &options.container,
+        ];
+
+        let mut child = self
+            .ytdlp_command(url, Some(options.clone()), args)
+            .stderr(Stdio::null())
             .stdout(Stdio::piped())
             .spawn()?;
 
@@ -314,6 +315,28 @@ impl YtdlpClient {
         }
     }
 
+    fn ytdlp_command(&self, url: &Url, options: Option<DownloadOptions>, args: Vec<&str>) -> Command {
+        let mut built_command = Command::new(&self.ytdlp_path);
+
+        let url_as_str = url.as_str();
+
+        let options = options.unwrap_or_default();
+
+        built_command
+            .arg("--remote-components")
+            .arg("ejs:github")
+            .arg("-o")
+            .arg(self.download_path.clone().join(&options.name_format))
+            .arg("-f")
+            .arg(self.get_format(&options))
+            .args(args)
+            .arg(url_as_str);
+
+        debug!("{}", format!("{:?}", built_command));
+
+        built_command
+    }
+
     pub fn get_downloads(&self) -> DashMap<Url, Download> {
         (*self.downloads).clone()
     }
@@ -330,11 +353,9 @@ impl YtdlpClient {
             .collect())
     }
 
-    async fn get_title(&self, url: &Url) -> Result<String> {
-        let output = Command::new(&self.ytdlp_path)
-            .arg("--simulate")
-            .arg("--get-title")
-            .arg(url.as_str())
+    async fn get_title(&self, url: &Url, options: &DownloadOptions) -> Result<String> {
+        let output = self
+            .ytdlp_command(url, Some(options.clone()), vec!["--simulate", "--get-title"])
             .stderr(Stdio::null())
             .stdout(Stdio::piped())
             .output()
@@ -421,19 +442,16 @@ impl YtdlpClient {
                     }
                     Err(_) => Err(Error::FailedToHalt),
                 },
-                _ => Err(Error::NotDownloading), // TODO - FIX THIS - SHOULD BE A DIFFERENT
+                _ => Err(Error::NotPresent), // TODO - FIX THIS - SHOULD BE A DIFFERENT
             },
-            None => Err(Error::NotDownloading),
+            None => Err(Error::NotPresent),
         }
     }
 
     /// Used to grab all urls - i.e. the requested link is a playlist.
     pub async fn get_all_urls(&self, url: &Url) -> Result<Vec<Url>> {
-        let output = Command::new(&self.ytdlp_path)
-            .arg("--flat-playlist")
-            .arg("--print")
-            .arg("%(url)s")
-            .arg(url.as_str())
+        let output = self
+            .ytdlp_command(url, None, vec!["--flat-playlist", "--print", "%(url)s"])
             .stderr(Stdio::null())
             .stdout(Stdio::piped())
             .output()
@@ -443,12 +461,34 @@ impl YtdlpClient {
         let mut urls = Vec::new();
         while let Ok(Some(line)) = stdio_lines.next_line().await {
             if let Ok(url) = Url::parse(&line) {
-                debug!("found url: {}", url);
+                trace!("found url: {}", url);
                 urls.push(url);
             }
         }
 
+        debug!("found {} urls", urls.len());
+
         Ok(urls)
+    }
+
+    pub async fn modify_download(&self, url: &Url, status: Status) -> Result<()> {
+        match self.downloads.remove(url) {
+            Some((url, download)) => {
+                self.downloads.insert(
+                    url,
+                    Download {
+                        download_termination: None, // TODO - SHOULD RUNNING BE CONSIDERED FOR STATUS? IF USER WANTS TO ADD DOWNLOAD ALREADY PRESENT (FAILED, ETC. IT SHOULD BE REMOVED, THEN RE-ADDED(?))
+                        options: download.options,
+                        progress: download.progress,
+                        status: status,
+                        title: download.title,
+                    },
+                );
+
+                Ok(())
+            }
+            None => Err(Error::NotPresent),
+        }
     }
 
     // async fn remove_partial_files(&self, url: &Url, options: &DownloadOptions) {
