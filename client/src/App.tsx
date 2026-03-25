@@ -1,43 +1,48 @@
-
-import { useQuery } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
-import { Navigate } from 'react-router';
-import Header from './components/Header';
+import { useQuery } from "@tanstack/react-query";
+import { AnimatePresence, motion } from "framer-motion";
+import { useEffect, useState } from "react";
+import { Navigate } from "react-router";
+import Header from "./components/Header";
 import { Button } from "./components/ui/button";
 import { Checkbox } from "./components/ui/checkbox";
 import { Input } from "./components/ui/input";
 import { Label } from "./components/ui/label";
-import { Progress } from './components/ui/progress';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./components/ui/select";
+import { Progress } from "./components/ui/progress";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "./components/ui/select";
 import "./index.css";
-import type { APIResponse } from './types/APIResponse';
-import type { DownloadEntry } from './types/DownloadEntry';
-import type { DownloadOptions } from './types/DownloadOptions';
-import type { DownloadUpdate } from './types/DownloadUpdate';
+import type { APIResponse } from "./types/APIResponse";
+import type { DownloadEntry } from "./types/DownloadEntry";
+import type { DownloadOptions } from "./types/DownloadOptions";
+import type { DownloadUpdate } from "./types/DownloadUpdate";
 
 const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
-
     // <----- State ----->
 
-    const [url, setUrl] = useState('');
-    const [quality, setQuality] = useState('best');
-    const [nameFormat, _] = useState('%(title)s.%(ext)s');
-    const [container, setContainer] = useState('mp4');
+    const [url, setUrl] = useState("");
+    const [quality, setQuality] = useState("best");
+    const [nameFormat, _] = useState("%(title)s.%(ext)s");
+    const [container, setContainer] = useState("mp4");
     const [isAdvancedOptionsOpen, setIsAdvancedOptionsOpen] = useState(false);
     const [downloads, setDownloads] = useState<DownloadEntry[]>([]);
     const [isDownloading, setIsDownloading] = useState(false);
     const [downloadError, setDownloadError] = useState<string | null>(null);
     const [advancedOptions, setAdvancedOptions] = useState({
-        autoStart: 'Yes',
-        downloadFolder: 'Default',
-        customNamePrefix: 'Default',
-        itemsLimit: 'Default',
-        strictPlaylistMode: false
+        autoStart: "Yes",
+        downloadFolder: "Default",
+        customNamePrefix: "Default",
+        itemsLimit: "Default",
+        strictPlaylistMode: false,
     });
 
     useEffect(() => {
         fetch("/api/download/existing")
-            .then(res => res.json())
+            .then((res) => res.json())
             .then(setDownloads);
 
         const connect = () => {
@@ -48,66 +53,77 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
                 setTimeout(connect, 3000);
             };
 
-            
             ws.onmessage = (event) => {
                 let response: APIResponse = JSON.parse(event.data);
                 if (response.type) {
                     switch (response.type) {
                         case "Update":
-                            const downloadUpdate: DownloadUpdate = JSON.parse(response.data);
-                            console.log(`received update: ${JSON.stringify(downloadUpdate)}`);
-                            
-                            setDownloads(oldDownloads =>
-                                oldDownloads.map(download =>
-                                    download.url === downloadUpdate.url
-                                    ? { ...download, download: { ...download.download, progress: downloadUpdate.progress } }
-                                    : download
-                                )
+                            const downloadUpdate: DownloadUpdate = JSON.parse(
+                                response.data,
                             );
-                            
+                            console.log(
+                                `received update: ${JSON.stringify(downloadUpdate)}`,
+                            );
+
+                            setDownloads((oldDownloads) =>
+                                oldDownloads.map((download) =>
+                                    download.url === downloadUpdate.url
+                                        ? {
+                                              ...download,
+                                              download: {
+                                                  ...download.download,
+                                                  progress:
+                                                      downloadUpdate.progress,
+                                              },
+                                          }
+                                        : download,
+                                ),
+                            );
+
                             break;
-                            
-                            case "DownloadsChange": // TODO - BACKEND WILL (EVENTUALLY) SEND ONLY UPDATED DOWNLOADS
-                                let changedDownloads: DownloadEntry[] = JSON.parse(response.data);
-                                console.log(`received downloads change: ${JSON.stringify(changedDownloads)}`);
-                                
-                                setDownloads(changedDownloads);
-                                
-                                break;
-                                
-                                default:
-                                    const _: never = response.type;
-                                    return _;
-                                }
-                            }
-                        };
-                        
-                        ws.onerror = () => {
-                            ws.close();
-                        };
-                
-                        ws.onopen = () => {
-                            console.log("successfully opened websocket");
-                        }
-                        
-                        return () => {
-                            ws.close();
-                        };
+
+                        case "DownloadsChange": // TODO - BACKEND WILL (EVENTUALLY) SEND ONLY UPDATED DOWNLOADS
+                            let changedDownloads: DownloadEntry[] = JSON.parse(
+                                response.data,
+                            );
+                            console.log(
+                                `received downloads change: ${JSON.stringify(changedDownloads)}`,
+                            );
+
+                            setDownloads(changedDownloads);
+
+                            break;
+
+                        default:
+                            const _: never = response.type;
+                            return _;
                     }
-                    connect();
-                }, []);
-                
-                const { isPending: configIsPending, data: config } = useQuery({
-                    queryKey: ['config'],
-                    queryFn: () =>
-            fetch("/api/config").then((res) =>
-                res.json(),
-            ),
+                }
+            };
+
+            ws.onerror = () => {
+                ws.close();
+            };
+
+            ws.onopen = () => {
+                console.log("successfully opened websocket");
+            };
+
+            return () => {
+                ws.close();
+            };
+        };
+        connect();
+    }, []);
+
+    const { isPending: configIsPending, data: config } = useQuery({
+        queryKey: ["config"],
+        queryFn: () => fetch("/api/config").then((res) => res.json()),
     });
 
     // <----- Loading ----->
 
-    if (configIsPending) return 'Loading...'
+    if (configIsPending) return "Loading...";
 
     // <----- App ----->
 
@@ -122,18 +138,18 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
             const options: DownloadOptions = {
                 container: container,
                 name_format: nameFormat,
-                quality: quality
-            }
+                quality: quality,
+            };
 
             await fetch("/api/download", {
                 method: "POST",
                 body: JSON.stringify({
-                    "url": url,
+                    url: url,
                     options,
                 }),
                 headers: {
                     "Content-Type": "application/json",
-                }
+                },
             });
         } catch (error) {
             setDownloadError(`Failed to start download with error: ${error}`);
@@ -146,13 +162,10 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
         // let urls = await fetch(new URL("download/urls", api)).then((res) =>
         //     res.json(),
         // );
-
         // urls = urls.join('\n');
-
         // const file = new File([urls], "urls.txt", { type: "text/plain;charset=utf-8" });
-
         // saveAs(file);
-    }
+    };
 
     return (
         <>
@@ -169,7 +182,13 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
                     <Button
                         onClick={handleDownload}
                         className="rounded-l-none border border-color"
-                        disabled={isDownloading || !url || !/^(http(s)?:\/\/)?([\w-]+\.)+[\w-]+(\/[\w-./?%&=]*)?$/.test(url)}
+                        disabled={
+                            isDownloading ||
+                            !url ||
+                            !/^(http(s)?:\/\/)?([\w-]+\.)+[\w-]+(\/[\w-./?%&=]*)?$/.test(
+                                url,
+                            )
+                        }
                     >
                         Download
                     </Button>
@@ -182,7 +201,11 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
                 )}
 
                 <div className="flex flex-row w-full space-x-4 max-w-4xl">
-                    <Select value={quality} onValueChange={setQuality} disabled={isDownloading}>
+                    <Select
+                        value={quality}
+                        onValueChange={setQuality}
+                        disabled={isDownloading}
+                    >
                         <SelectTrigger className="flex-1 w-full">
                             <SelectValue placeholder="Quality" />
                         </SelectTrigger>
@@ -194,7 +217,11 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
                         </SelectContent>
                     </Select>
 
-                    <Select value={container} onValueChange={setContainer} disabled={isDownloading}>
+                    <Select
+                        value={container}
+                        onValueChange={setContainer}
+                        disabled={isDownloading}
+                    >
                         <SelectTrigger className="flex-1 w-full">
                             <SelectValue placeholder="Format" />
                         </SelectTrigger>
@@ -209,30 +236,46 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
                     <Button
                         variant="outline"
                         className="flex-1 w-full"
-                        onClick={() => setIsAdvancedOptionsOpen(!isAdvancedOptionsOpen)}
+                        onClick={() =>
+                            setIsAdvancedOptionsOpen(!isAdvancedOptionsOpen)
+                        }
                         disabled={isDownloading}
                     >
                         Advanced Options
                     </Button>
+                </div>
 
+                <AnimatePresence initial={false}>
                     {isAdvancedOptionsOpen && (
-                        <div className="space-y-4 p-4 border rounded-md w-full max-w-md">
+                        <motion.div
+                            initial={{ height: 0, opacity: 1 }}
+                            animate={{ height: "auto", opacity: 1 }}
+                            exit={{ height: 0, opacity: 1 }}
+                            transition={{ duration: 0.3 }}
+                            style={{ overflow: "hidden" }}
+                        >
                             <div className="flex flex-wrap gap-4">
                                 <div className="flex-1">
                                     <Label>Auto Start</Label>
                                     <Select
                                         value={advancedOptions.autoStart}
-                                        onValueChange={(value) => setAdvancedOptions(prev => ({
-                                            ...prev,
-                                            autoStart: value
-                                        }))}
+                                        onValueChange={(value) =>
+                                            setAdvancedOptions((prev) => ({
+                                                ...prev,
+                                                autoStart: value,
+                                            }))
+                                        }
                                     >
                                         <SelectTrigger>
                                             <SelectValue placeholder="Auto Start" />
                                         </SelectTrigger>
                                         <SelectContent>
-                                            <SelectItem value="Yes">Yes</SelectItem>
-                                            <SelectItem value="No">No</SelectItem>
+                                            <SelectItem value="Yes">
+                                                Yes
+                                            </SelectItem>
+                                            <SelectItem value="No">
+                                                No
+                                            </SelectItem>
                                         </SelectContent>
                                     </Select>
                                 </div>
@@ -240,17 +283,23 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
                                     <Label>Download Folder</Label>
                                     <Select
                                         value={advancedOptions.downloadFolder}
-                                        onValueChange={(value) => setAdvancedOptions(prev => ({
-                                            ...prev,
-                                            downloadFolder: value
-                                        }))}
+                                        onValueChange={(value) =>
+                                            setAdvancedOptions((prev) => ({
+                                                ...prev,
+                                                downloadFolder: value,
+                                            }))
+                                        }
                                     >
                                         <SelectTrigger>
                                             <SelectValue placeholder="Download Folder" />
                                         </SelectTrigger>
                                         <SelectContent>
-                                            <SelectItem value="Default">Default</SelectItem>
-                                            <SelectItem value="Custom">Custom</SelectItem>
+                                            <SelectItem value="Default">
+                                                Default
+                                            </SelectItem>
+                                            <SelectItem value="Custom">
+                                                Custom
+                                            </SelectItem>
                                         </SelectContent>
                                     </Select>
                                 </div>
@@ -262,29 +311,40 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
                                     <Input
                                         placeholder="Default"
                                         value={advancedOptions.customNamePrefix}
-                                        onChange={(e) => setAdvancedOptions(prev => ({
-                                            ...prev,
-                                            customNamePrefix: e.target.value
-                                        }))}
+                                        onChange={(e) =>
+                                            setAdvancedOptions((prev) => ({
+                                                ...prev,
+                                                customNamePrefix:
+                                                    e.target.value,
+                                            }))
+                                        }
                                     />
                                 </div>
                                 <div className="flex-1">
                                     <Label>Items Limit</Label>
                                     <Select
                                         value={advancedOptions.itemsLimit}
-                                        onValueChange={(value) => setAdvancedOptions(prev => ({
-                                            ...prev,
-                                            itemsLimit: value
-                                        }))}
+                                        onValueChange={(value) =>
+                                            setAdvancedOptions((prev) => ({
+                                                ...prev,
+                                                itemsLimit: value,
+                                            }))
+                                        }
                                     >
                                         <SelectTrigger>
                                             <SelectValue placeholder="Items Limit" />
                                         </SelectTrigger>
                                         <SelectContent>
-                                            <SelectItem value="Default">Default</SelectItem>
+                                            <SelectItem value="Default">
+                                                Default
+                                            </SelectItem>
                                             <SelectItem value="5">5</SelectItem>
-                                            <SelectItem value="10">10</SelectItem>
-                                            <SelectItem value="25">25</SelectItem>
+                                            <SelectItem value="10">
+                                                10
+                                            </SelectItem>
+                                            <SelectItem value="25">
+                                                25
+                                            </SelectItem>
                                         </SelectContent>
                                     </Select>
                                 </div>
@@ -294,56 +354,75 @@ const DownloadPage = ({ hasSeenHomepage }: { hasSeenHomepage: boolean }) => {
                                 <Checkbox
                                     id="strict-playlist-mode"
                                     checked={advancedOptions.strictPlaylistMode}
-                                    onCheckedChange={(checked) => setAdvancedOptions(prev => ({
-                                        ...prev,
-                                        strictPlaylistMode: !!checked
-                                    }))}
+                                    onCheckedChange={(checked) =>
+                                        setAdvancedOptions((prev) => ({
+                                            ...prev,
+                                            strictPlaylistMode: !!checked,
+                                        }))
+                                    }
                                 />
-                                <Label htmlFor="strict-playlist-mode">Strict Playlist Mode</Label>
+                                <Label htmlFor="strict-playlist-mode">
+                                    Strict Playlist Mode
+                                </Label>
                             </div>
 
                             <div className="flex flex-wrap justify-center gap-2 mt-4">
-                                <Button variant="outline" className="flex-1">Import URLs</Button>
-                                <Button variant="outline" className="flex-1" onClick={() => handleUrlDownloads()}>Export URLs</Button>
+                                <Button variant="outline" className="flex-1">
+                                    Import URLs
+                                </Button>
+                                <Button
+                                    variant="outline"
+                                    className="flex-1"
+                                    onClick={() => handleUrlDownloads()}
+                                >
+                                    Export URLs
+                                </Button>
                             </div>
-                        </div>
+                        </motion.div>
                     )}
-                </div>
+                </AnimatePresence>
 
                 <h2 className="flex w-full border-t border-b text-4xl justify-center py-3">
-                    <p className="max-w-5xl w-full text-left">
-                        Downloading
-                    </p>
+                    <p className="max-w-5xl w-full text-left">Downloading</p>
                 </h2>
                 <div className="mt-4 max-w-5xl w-full">
                     <div className="space-y-2">
-                        {downloads.map(entry => (
+                        {downloads.map((entry) => (
                             <div
                                 key={entry.url}
                                 className="flex items-center space-x-2 p-2 border rounded-md"
                             >
                                 <div className="grow">
                                     <div className="flex justify-between">
-                                        <span className="text-sm min-w-0 truncate">{entry.download.title}</span>
-                                        <span className="text-sm">{entry.download.progress.percent}%</span>
+                                        <span className="text-sm min-w-0 truncate">
+                                            {entry.download.title}
+                                        </span>
+                                        <span className="text-sm">
+                                            {entry.download.progress.percent}%
+                                        </span>
                                     </div>
                                     <div className="w-full bg-gray-200 rounded-full h-2.5 dark:bg-gray-700 mt-1">
                                         <Progress
                                             className="bg-blue-600 h-2.5 rounded-full shrink-0"
-                                            value={Number(entry.download.progress.percent)}
+                                            value={Number(
+                                                entry.download.progress.percent,
+                                            )}
                                         ></Progress>
                                     </div>
                                     <div className="flex justify-between text-xs text-gray-500 mt-1">
-                                        <span>{entry.download.progress.speed}</span>
-                                        <span>ETA: {entry.download.progress.eta}</span>
+                                        <span>
+                                            {entry.download.progress.speed}
+                                        </span>
+                                        <span>
+                                            ETA: {entry.download.progress.eta}
+                                        </span>
                                     </div>
                                 </div>
                                 <div className="flex space-x-2">
                                     <Button
                                         variant="ghost"
                                         size="icon"
-                                    >
-                                    </Button>
+                                    ></Button>
                                 </div>
                             </div>
                         ))}
