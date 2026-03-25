@@ -6,5 +6,8 @@
         "dotenv",
         "sqlx",
         "ytdlp"
-    ]
+    ],
+    "editor.codeActionsOnSave": {
+        "source.organizeImports": "explicit"
+    }
 }
