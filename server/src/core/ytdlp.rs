@@ -457,7 +457,6 @@ impl YtdlpClient {
         }
     }
 
-    /// Used to grab all urls - i.e. the requested link is a playlist.
     pub async fn get_all_urls(&self, url: &Url) -> Result<Vec<Url>> {
         let output = self
             .ytdlp_command(url, None, vec!["--flat-playlist", "--print", "%(url)s"])
@@ -474,8 +473,6 @@ impl YtdlpClient {
                 urls.push(url);
             }
         }
-
-        debug!("found {} urls", urls.len());
 
         Ok(urls)
     }
