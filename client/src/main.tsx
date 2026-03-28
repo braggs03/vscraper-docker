@@ -15,13 +15,27 @@ function Root() {
             <ThemeProvider>
                 <BrowserRouter>
                     <Routes>
-                        <Route path="/" element={<App hasSeenHomepage={hasSeenHomepage} />} />
-                        <Route path="/starter" element={<Homepage onGetStarted={() => setHasSeenHomepage(true)} />} />
+                        <Route
+                            path="/"
+                            element={<App hasSeenHomepage={hasSeenHomepage} />}
+                        />
+                        <Route
+                            path="/starter"
+                            element={
+                                <Homepage
+                                    onGetStarted={() =>
+                                        setHasSeenHomepage(true)
+                                    }
+                                />
+                            }
+                        />
                     </Routes>
                 </BrowserRouter>
             </ThemeProvider>
-        </QueryClientProvider >
+        </QueryClientProvider>
     );
 }
 
-ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(<Root />);
+ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+    <Root />,
+);
